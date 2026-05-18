@@ -163,6 +163,23 @@
       flex-shrink: 0;
     }
 
+    .btn-delete {
+      background: none;
+      border: none;
+      font-size: 15px;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 6px;
+      opacity: 0.4;
+      transition: opacity 0.2s, background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .btn-delete:hover, .btn-delete:active {
+      opacity: 1;
+      background: rgba(239, 68, 68, 0.15);
+    }
+
     /* Cards */
     .card {
       background: var(--bg-secondary);
@@ -1187,32 +1204,43 @@
 
       const sorted = [...sessions].sort((a, b) => b.timestamp - a.timestamp);
 
-      container.innerHTML = sorted.map((session, idx) => `
-        <div class="session-card" data-session-id="${session.id}">
-          <div class="session-header" onclick="toggleExpandSession(${session.id})">
-            <div class="session-info">
-              <div class="session-title">${session.session}</div>
-              <div class="session-date">${session.date}</div>
-            </div>
-            <button class="btn-expand" ${state.expandedSessions.includes(session.id) ? 'style="transform:rotate(180deg)"' : ''}>▼</button>
-          </div>
+      container.innerHTML = sorted.map((session) => {
+        const isExpanded = state.expandedSessions.includes(session.id);
+        const exercisesHTML = session.exercises.map(ex => {
+          const seriesHTML = ex.series.map((s, i) =>
+            '<div class="series-line">Serie ' + (i+1) + ': ' + s.reps + ' reps' +
+            (s.weight ? ' @ ' + s.weight + 'kg' : '') +
+            (s.weight2 ? ' + ' + s.weight2 + 'kg' : '') + '</div>'
+          ).join('');
+          return '<div class="exercise-item"><div class="exercise-name">' + ex.name + '</div>' + seriesHTML + '</div>';
+        }).join('');
 
-          <div class="session-details" ${state.expandedSessions.includes(session.id) ? '' : 'style="display:none"'}>
-            ${session.exercises.map(ex => `
-              <div class="exercise-item">
-                <div class="exercise-name">${ex.name}</div>
-                <div>
-                  ${ex.series.map((s, i) => `
-                    <div class="series-line">
-                      Serie ${i + 1}: ${s.reps} reps${s.weight ? ` @ ${s.weight}kg` : ''}${s.weight2 ? ` + ${s.weight2}kg` : ''}
-                    </div>
-                  `).join('')}
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `).join('');
+        return '<div class="session-card">' +
+          '<div class="session-header" onclick="toggleExpandSession(' + session.id + ')">' +
+            '<div class="session-info">' +
+              '<div class="session-title">' + session.session + '</div>' +
+              '<div class="session-date">' + session.date + '</div>' +
+            '</div>' +
+            '<div style="display:flex;align-items:center;gap:8px">' +
+              '<button class="btn-delete" onclick="event.stopPropagation();deleteSession(' + session.id + ')" title="Borrar sesión">🗑</button>' +
+              '<button class="btn-expand"' + (isExpanded ? ' style="transform:rotate(180deg)"' : '') + '>▼</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="session-details"' + (isExpanded ? '' : ' style="display:none"') + '>' +
+            exercisesHTML +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function deleteSession(sessionId) {
+      if (!confirm('¿Borrar esta sesión del historial?')) return;
+      sessions = sessions.filter(s => s.id !== sessionId);
+      saveSessions();
+      // Limpiar de expandedSessions si estaba expandida
+      state.expandedSessions = state.expandedSessions.filter(id => id !== sessionId);
+      saveState();
+      renderHistory();
     }
 
     function toggleExpandSession(sessionId) {
