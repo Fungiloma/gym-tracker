@@ -848,27 +848,36 @@
     }
 
     // ==================== SCREEN: HOME ====================
+    const SESSION_KEYS = Object.keys(PLAN);
+
     function renderHome() {
       const container = document.getElementById('sessions-list');
+      if (!container) return;
+
       const emojis = ['🏋️', '🦵', '💪', '🔥'];
       const durations = ['75', '75', '70', '60'];
 
-      container.innerHTML = Object.entries(PLAN)
-        .map(([sessionName, exercises], i) => `
-          <button class="session-btn ${sessionName.includes('⭐') ? 'star' : ''}" onclick="startSession('${sessionName.replace(/'/g, "\\'")}')">
-            <div class="session-btn-emoji">${emojis[i]}</div>
-            <div class="session-btn-content">
-              <div class="session-btn-title">${sessionName}</div>
-              <div class="session-btn-info">${exercises.length} ejercicios · ${durations[i]} min</div>
-            </div>
-            <div class="session-btn-arrow">›</div>
-          </button>
-        `)
+      container.innerHTML = SESSION_KEYS
+        .map((sessionName, i) => {
+          const exercises = PLAN[sessionName];
+          const isStar = sessionName.includes('⭐');
+          return `
+            <button class="session-btn ${isStar ? 'star' : ''}" onclick="startSession(${i})">
+              <div class="session-btn-emoji">${emojis[i]}</div>
+              <div class="session-btn-content">
+                <div class="session-btn-title">${sessionName}</div>
+                <div class="session-btn-info">${exercises.length} ejercicios · ${durations[i]} min</div>
+              </div>
+              <div class="session-btn-arrow">›</div>
+            </button>
+          `;
+        })
         .join('');
     }
 
     // ==================== SCREEN: SESSION ====================
-    function startSession(sessionName) {
+    function startSession(idx) {
+      const sessionName = SESSION_KEYS[idx];
       state.activeSession = sessionName;
       state.sessionData = {};
       state.timers = {};
@@ -942,19 +951,16 @@
                     const val2 = data[seriesIdx]?.weight2 || '';
                     return `
                       <div style="display: flex; align-items: center; gap: 3px;">
-                        <input type="number" class="input-superset" placeholder="${labels[0]}" value="${val1}"
-                          onchange="updateSessionData('${ex.name}', ${seriesIdx}, 'weight', this.value)"
-                          onkeydown="if (event.key === 'Enter') event.preventDefault(); this.blur();">
+                        <input type="number" class="input-superset kg-input" placeholder="${labels[0]}" value="${val1}"
+                          data-ex="${exIdx}" data-series="${seriesIdx}" data-field="weight">
                         <span style="color: var(--border); font-size: 11px;">+</span>
-                        <input type="number" class="input-superset" placeholder="${labels[1]}" value="${val2}"
-                          onchange="updateSessionData('${ex.name}', ${seriesIdx}, 'weight2', this.value)"
-                          onkeydown="if (event.key === 'Enter') event.preventDefault(); this.blur();">
+                        <input type="number" class="input-superset kg-input" placeholder="${labels[1]}" value="${val2}"
+                          data-ex="${exIdx}" data-series="${seriesIdx}" data-field="weight2">
                       </div>
                     `;
                   })() : `
-                    <input type="number" class="input-kg" placeholder="kg" value="${data[seriesIdx]?.weight || ''}"
-                      onchange="updateSessionData('${ex.name}', ${seriesIdx}, 'weight', this.value)"
-                      onkeydown="if (event.key === 'Enter') event.preventDefault(); this.blur();">
+                    <input type="number" class="input-kg kg-input" placeholder="kg" value="${data[seriesIdx]?.weight || ''}"
+                      data-ex="${exIdx}" data-series="${seriesIdx}" data-field="weight">
                   `}
 
                   ${s.rest > 0 ? (activeTimer ? `
@@ -968,21 +974,41 @@
                       </svg>
                       <span class="timer-text">${Math.floor(activeTimer / 60) > 0 ? Math.floor(activeTimer / 60) + ':' + (activeTimer % 60).toString().padStart(2, '0') : activeTimer + 's'}</span>
                       <div class="timer-controls">
-                        <button class="timer-control-btn" onclick="toggleTimer(${key})">⏸</button>
-                        <button class="timer-control-btn" onclick="clearTimer(${key})">✕</button>
+                        <button class="timer-control-btn" onclick="toggleTimer('${key}')">⏸</button>
+                        <button class="timer-control-btn" onclick="clearTimer('${key}')">✕</button>
                       </div>
                     </div>
-                  `) : s.rest > 0 ? `
-                    <button class="timer-btn" onclick="startTimer(${key}, ${s.rest})">
+                  `) : `
+                    <button class="timer-btn" onclick="startTimer('${key}', ${s.rest})">
                       ⏱ ${s.rest >= 60 ? Math.floor(s.rest / 60) + 'm' + (s.rest % 60 > 0 ? s.rest % 60 + 's' : '') : s.rest + 's'}
                     </button>
-                  ` : '')}
+                  `}
                 </div>
               `;
             }).join('')}
           </div>
         `;
       }).join('');
+
+      // Event delegation para todos los inputs de kg
+      container.addEventListener('change', function(e) {
+        if (!e.target.classList.contains('kg-input')) return;
+        const exIdx = parseInt(e.target.dataset.ex);
+        const seriesIdx = parseInt(e.target.dataset.series);
+        const field = e.target.dataset.field;
+        const exName = exercises[exIdx]?.name;
+        if (!exName || !state.sessionData[exName]) return;
+        state.sessionData[exName][seriesIdx] = {
+          ...state.sessionData[exName][seriesIdx],
+          [field]: e.target.value
+        };
+        saveState();
+      });
+
+      container.addEventListener('keydown', function(e) {
+        if (!e.target.classList.contains('kg-input')) return;
+        if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+      });
     }
 
     function updateSessionData(exName, seriesIdx, field, value) {
