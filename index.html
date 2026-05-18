@@ -945,22 +945,10 @@
         return renderExerciseBlock(ex, exIdx, badge, data);
       }).join('');
 
-      // Event delegation inputs
-      container.addEventListener('change', function(e) {
-        if (!e.target.classList.contains('kg-input')) return;
-        const exIdx = parseInt(e.target.dataset.ex);
-        const seriesIdx = parseInt(e.target.dataset.series);
-        const field = e.target.dataset.field;
-        const exName = exercises[exIdx] && exercises[exIdx].name;
-        if (!exName || !state.sessionData[exName]) return;
-        state.sessionData[exName][seriesIdx][field] = e.target.value;
-        saveState();
-      });
-
-      container.addEventListener('keydown', function(e) {
-        if (!e.target.classList.contains('kg-input')) return;
-        if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
-      });
+      // Restaurar timers activos si los hay
+      if (Object.keys(state.timers).length > 0) {
+        ensureTimerInterval();
+      }
     }
 
     function renderExerciseBlock(ex, exIdx, badge, data) {
@@ -1001,33 +989,14 @@
         inputHTML = '<input type="number" class="input-kg kg-input" placeholder="kg" value="' + val + '" data-ex="' + exIdx + '" data-series="' + seriesIdx + '" data-field="weight">';
       }
 
-      // Timer HTML
+      // Timer HTML — si hay timer activo renderiza el mini-timer, si no el botón
       var timerHTML = '';
       if (s.rest > 0) {
-        if (activeTimer) {
-          var mins = Math.floor(activeTimer / 60);
-          var secs = activeTimer % 60;
-          var timeStr = mins > 0 ? (mins + ':' + (secs < 10 ? '0' : '') + secs) : (activeTimer + 's');
-          var warningClass = activeTimer <= 10 ? ' warning' : '';
-          var circumference = 2 * Math.PI * 7;
-          var offset = circumference * (1 - activeTimer / s.rest);
-          timerHTML = '<div class="mini-timer' + warningClass + '">' +
-            '<svg class="timer-circle" viewBox="0 0 18 18">' +
-              '<circle cx="9" cy="9" r="7" fill="none" stroke="var(--border)" stroke-width="2.5"/>' +
-              '<circle cx="9" cy="9" r="7" fill="none" stroke="var(--accent)" stroke-width="2.5"' +
-                ' stroke-dasharray="' + circumference + '"' +
-                ' stroke-dashoffset="' + offset + '"' +
-                ' style="transition:stroke-dashoffset 1s linear;transform:rotate(-90deg);transform-origin:50% 50%"/>' +
-            '</svg>' +
-            '<span class="timer-text">' + timeStr + '</span>' +
-            '<div class="timer-controls">' +
-              '<button class="timer-control-btn" onclick="toggleTimer(\'' + key + '\')">⏸</button>' +
-              '<button class="timer-control-btn" onclick="clearTimer(\'' + key + '\')">✕</button>' +
-            '</div>' +
-          '</div>';
+        if (activeTimer && !isNaN(activeTimer.remaining)) {
+          timerHTML = buildTimerHTML(key, activeTimer.duration, activeTimer.remaining, activeTimer.paused);
         } else {
           var restLabel = s.rest >= 60 ? (Math.floor(s.rest / 60) + 'm' + (s.rest % 60 > 0 ? s.rest % 60 + 's' : '')) : (s.rest + 's');
-          timerHTML = '<button class="timer-btn" onclick="startTimer(\'' + key + '\',' + s.rest + ')">⏱ ' + restLabel + '</button>';
+          timerHTML = '<button class="timer-btn" data-timer-key="' + key + '" onclick="startTimer(\'' + key + '\',' + s.rest + ')">⏱ ' + restLabel + '</button>';
         }
       }
 
@@ -1048,51 +1017,179 @@
       saveState();
     }
 
-    let timerIntervals = {};
+    // ==================== TIMERS ====================
+    // Arquitectura: timestamp-based, no counter-based
+    // state.timers[key] = { duration, endTs, paused, remaining }
+    // El interval solo actualiza el DOM del timer, nunca rerenderiza la sesión
+
+    let timerInterval = null; // Un solo interval global
 
     function startTimer(key, duration) {
-      state.timers[key] = duration;
+      // Cancelar timer existente en esta key si lo hay
+      if (state.timers[key]) clearTimerState(key);
+
+      state.timers[key] = {
+        duration: duration,
+        endTs: Date.now() + duration * 1000,
+        paused: false,
+        remaining: duration
+      };
       saveState();
-      renderSession();
-      runTimer(key, duration);
+
+      // Mostrar el timer en el DOM sin rerenderizar toda la sesión
+      swapTimerButton(key, duration);
+      ensureTimerInterval();
     }
 
-    function runTimer(key, duration) {
-      if (timerIntervals[key]) clearInterval(timerIntervals[key]);
+    function swapTimerButton(key, duration) {
+      // Encuentra el botón del timer por key y lo reemplaza con el mini-timer
+      const btn = document.querySelector('[data-timer-key="' + key + '"]');
+      if (!btn) return;
+      const remaining = state.timers[key] ? state.timers[key].remaining : duration;
+      btn.outerHTML = buildTimerHTML(key, duration, remaining, false);
+    }
 
-      timerIntervals[key] = setInterval(() => {
-        if (!state.timers[key] || state.timers[key] <= 0) {
-          clearInterval(timerIntervals[key]);
-          delete timerIntervals[key];
-          beep();
-          delete state.timers[key];
-          saveState();
-          renderSession();
-          return;
+    function buildTimerHTML(key, duration, remaining, paused) {
+      var mins = Math.floor(remaining / 60);
+      var secs = remaining % 60;
+      var timeStr = mins > 0 ? (mins + ':' + (secs < 10 ? '0' : '') + secs) : (remaining + 's');
+      var warningClass = remaining <= 10 ? ' warning' : '';
+      var circumference = 43.98; // 2 * PI * 7
+      var offset = circumference * (1 - remaining / duration);
+      var pauseIcon = paused ? '▶' : '⏸';
+      return '<div class="mini-timer' + warningClass + '" data-timer-key="' + key + '" data-duration="' + duration + '">' +
+        '<svg class="timer-circle" viewBox="0 0 18 18">' +
+          '<circle cx="9" cy="9" r="7" fill="none" stroke="var(--border)" stroke-width="2.5"/>' +
+          '<circle cx="9" cy="9" r="7" fill="none" stroke="var(--accent)" stroke-width="2.5"' +
+            ' stroke-dasharray="' + circumference + '"' +
+            ' stroke-dashoffset="' + offset + '"' +
+            ' style="transform:rotate(-90deg);transform-origin:50% 50%"/>' +
+        '</svg>' +
+        '<span class="timer-text">' + timeStr + '</span>' +
+        '<div class="timer-controls">' +
+          '<button class="timer-control-btn" onclick="toggleTimer(\'' + key + '\')">' + pauseIcon + '</button>' +
+          '<button class="timer-control-btn" onclick="clearTimer(\'' + key + '\')">✕</button>' +
+        '</div>' +
+      '</div>';
+    }
+
+    function ensureTimerInterval() {
+      if (timerInterval) return; // Ya corre
+      timerInterval = setInterval(tickTimers, 250); // 250ms para mayor precisión
+    }
+
+    function tickTimers() {
+      var now = Date.now();
+      var hasActive = false;
+
+      Object.keys(state.timers).forEach(function(key) {
+        var t = state.timers[key];
+        if (!t || t.paused) return;
+
+        var remaining = Math.max(0, Math.round((t.endTs - now) / 1000));
+        t.remaining = remaining;
+
+        // Actualizar solo el texto y el SVG del timer en el DOM
+        var el = document.querySelector('[data-timer-key="' + key + '"]');
+        if (el) {
+          var textEl = el.querySelector('.timer-text');
+          var circleEl = el.querySelectorAll('circle')[1];
+          var mins = Math.floor(remaining / 60);
+          var secs = remaining % 60;
+          if (textEl) textEl.textContent = mins > 0 ? (mins + ':' + (secs < 10 ? '0' : '') + secs) : (remaining + 's');
+          if (circleEl) {
+            var circumference = 43.98;
+            var offset = circumference * (1 - remaining / t.duration);
+            circleEl.setAttribute('stroke-dashoffset', offset);
+          }
+          // Warning color
+          if (remaining <= 10) el.classList.add('warning');
+          else el.classList.remove('warning');
+
+          hasActive = true;
         }
 
-        state.timers[key]--;
-        saveState();
-        renderSession();
-      }, 1000);
-    }
+        if (remaining <= 0) {
+          beep();
+          clearTimerState(key);
+          // Reemplazar mini-timer con botón original
+          if (el) {
+            var restLabel = t.duration >= 60 ?
+              (Math.floor(t.duration / 60) + 'm' + (t.duration % 60 > 0 ? t.duration % 60 + 's' : '')) :
+              (t.duration + 's');
+            el.outerHTML = '<button class="timer-btn" data-timer-key="' + key + '" onclick="startTimer(\'' + key + '\',' + t.duration + ')">⏱ ' + restLabel + '</button>';
+          }
+        }
+      });
 
-    function toggleTimer(key) {
-      if (timerIntervals[key]) {
-        clearInterval(timerIntervals[key]);
-        delete timerIntervals[key];
-      } else {
-        runTimer(key, state.timers[key]);
+      // Guardar remaining periódicamente (no cada tick para no saturar)
+      saveState();
+
+      // Parar el interval si no hay timers activos
+      if (!hasActive && Object.keys(state.timers).length === 0) {
+        clearInterval(timerInterval);
+        timerInterval = null;
       }
     }
 
-    function clearTimer(key) {
-      if (timerIntervals[key]) clearInterval(timerIntervals[key]);
-      delete timerIntervals[key];
+    function toggleTimer(key) {
+      var t = state.timers[key];
+      if (!t) return;
+      if (t.paused) {
+        // Reanudar: recalcular endTs desde ahora + remaining
+        t.endTs = Date.now() + t.remaining * 1000;
+        t.paused = false;
+        ensureTimerInterval();
+      } else {
+        // Pausar: guardar remaining actual
+        t.remaining = Math.max(0, Math.round((t.endTs - Date.now()) / 1000));
+        t.paused = true;
+      }
+      saveState();
+      // Actualizar icono pausa/play
+      var el = document.querySelector('[data-timer-key="' + key + '"]');
+      if (el) {
+        var btn = el.querySelector('.timer-control-btn');
+        if (btn) btn.textContent = t.paused ? '▶' : '⏸';
+      }
+    }
+
+    function clearTimerState(key) {
       delete state.timers[key];
       saveState();
-      renderSession();
     }
+
+    function clearTimer(key) {
+      var t = state.timers[key];
+      var duration = t ? t.duration : 60;
+      clearTimerState(key);
+      var el = document.querySelector('[data-timer-key="' + key + '"]');
+      if (el) {
+        var restLabel = duration >= 60 ?
+          (Math.floor(duration / 60) + 'm' + (duration % 60 > 0 ? duration % 60 + 's' : '')) :
+          (duration + 's');
+        el.outerHTML = '<button class="timer-btn" data-timer-key="' + key + '" onclick="startTimer(\'' + key + '\',' + duration + ')">⏱ ' + restLabel + '</button>';
+      }
+    }
+
+    // Restaurar timers activos al volver a la app (visibilitychange)
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') {
+        // Recalcular remaining para todos los timers activos
+        var now = Date.now();
+        Object.keys(state.timers).forEach(function(key) {
+          var t = state.timers[key];
+          if (t && !t.paused) {
+            t.remaining = Math.max(0, Math.round((t.endTs - now) / 1000));
+            if (t.remaining <= 0) {
+              beep();
+              clearTimerState(key);
+            }
+          }
+        });
+        ensureTimerInterval();
+      }
+    });
 
     function beep() {
       try {
@@ -1264,9 +1361,42 @@
     }
 
     // ==================== INIT ====================
+    function initInputListeners() {
+      const container = document.getElementById('exercises-container');
+
+      // Change: guardar peso
+      container.addEventListener('change', function(e) {
+        if (!e.target.classList.contains('kg-input')) return;
+        const sessionName = state.activeSession;
+        const exercises = PLAN[sessionName] || [];
+        const exIdx = parseInt(e.target.dataset.ex);
+        const seriesIdx = parseInt(e.target.dataset.series);
+        const field = e.target.dataset.field;
+        const exName = exercises[exIdx] && exercises[exIdx].name;
+        if (!exName || !state.sessionData[exName]) return;
+        state.sessionData[exName][seriesIdx][field] = e.target.value;
+        saveState();
+      });
+
+      // Keydown: Enter pasa al siguiente input
+      container.addEventListener('keydown', function(e) {
+        if (!e.target.classList.contains('kg-input')) return;
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const all = Array.from(container.querySelectorAll('.kg-input'));
+        const idx = all.indexOf(e.target);
+        if (idx < all.length - 1) {
+          all[idx + 1].focus();
+        } else {
+          e.target.blur();
+        }
+      });
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
       loadState();
       loadSessions();
+      initInputListeners();
       registerServiceWorker();
       renderHome();
     });
