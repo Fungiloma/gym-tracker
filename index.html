@@ -925,83 +925,18 @@
       container.innerHTML = exercises.map((ex, exIdx) => {
         const badge = BADGE[ex.type];
         const data = state.sessionData[ex.name] || [];
-
-        return `
-          <div class="exercise-block">
-            <div class="exercise-header">
-              <div class="exercise-header-left">
-                <div class="exercise-name-main">${ex.name}</div>
-                <div class="exercise-note">${ex.note}</div>
-              </div>
-              <span class="badge" style="background: ${badge.color}22; color: ${badge.color}; border: 1px solid ${badge.color}44;">${badge.label}</span>
-            </div>
-
-            ${ex.series.map((s, seriesIdx) => {
-              const key = `${exIdx}-${seriesIdx}`;
-              const activeTimer = state.timers[key];
-
-              return `
-                <div class="series-block ${s.drop ? 'drop' : ''}">
-                  <div class="series-number">${seriesIdx + 1}</div>
-                  <div class="series-reps">${s.reps} reps</div>
-
-                  ${ex.type === 'superset' ? (() => {
-                    const labels = SUPERSET_LABELS[ex.name] || ['A', 'B'];
-                    const val1 = data[seriesIdx]?.weight || '';
-                    const val2 = data[seriesIdx]?.weight2 || '';
-                    return `
-                      <div style="display: flex; align-items: center; gap: 3px;">
-                        <input type="number" class="input-superset kg-input" placeholder="${labels[0]}" value="${val1}"
-                          data-ex="${exIdx}" data-series="${seriesIdx}" data-field="weight">
-                        <span style="color: var(--border); font-size: 11px;">+</span>
-                        <input type="number" class="input-superset kg-input" placeholder="${labels[1]}" value="${val2}"
-                          data-ex="${exIdx}" data-series="${seriesIdx}" data-field="weight2">
-                      </div>
-                    `;
-                  })() : `
-                    <input type="number" class="input-kg kg-input" placeholder="kg" value="${data[seriesIdx]?.weight || ''}"
-                      data-ex="${exIdx}" data-series="${seriesIdx}" data-field="weight">
-                  `}
-
-                  ${s.rest > 0 ? (activeTimer ? `
-                    <div class="mini-timer ${activeTimer <= 10 ? 'warning' : ''}">
-                      <svg class="timer-circle" viewBox="0 0 18 18">
-                        <circle cx="9" cy="9" r="7" fill="none" stroke="var(--border)" stroke-width="2.5"/>
-                        <circle cx="9" cy="9" r="7" fill="none" stroke="var(--accent)" stroke-width="2.5"
-                          stroke-dasharray="${2 * Math.PI * 7}"
-                          stroke-dashoffset="${2 * Math.PI * 7 * (1 - activeTimer / s.rest)}"
-                          style="transition: stroke-dashoffset 1s linear; transform: rotate(-90deg); transform-origin: 50% 50%;"/>
-                      </svg>
-                      <span class="timer-text">${Math.floor(activeTimer / 60) > 0 ? Math.floor(activeTimer / 60) + ':' + (activeTimer % 60).toString().padStart(2, '0') : activeTimer + 's'}</span>
-                      <div class="timer-controls">
-                        <button class="timer-control-btn" onclick="toggleTimer('${key}')">⏸</button>
-                        <button class="timer-control-btn" onclick="clearTimer('${key}')">✕</button>
-                      </div>
-                    </div>
-                  `) : `
-                    <button class="timer-btn" onclick="startTimer('${key}', ${s.rest})">
-                      ⏱ ${s.rest >= 60 ? Math.floor(s.rest / 60) + 'm' + (s.rest % 60 > 0 ? s.rest % 60 + 's' : '') : s.rest + 's'}
-                    </button>
-                  `}
-                </div>
-              `;
-            }).join('')}
-          </div>
-        `;
+        return renderExerciseBlock(ex, exIdx, badge, data);
       }).join('');
 
-      // Event delegation para todos los inputs de kg
+      // Event delegation inputs
       container.addEventListener('change', function(e) {
         if (!e.target.classList.contains('kg-input')) return;
         const exIdx = parseInt(e.target.dataset.ex);
         const seriesIdx = parseInt(e.target.dataset.series);
         const field = e.target.dataset.field;
-        const exName = exercises[exIdx]?.name;
+        const exName = exercises[exIdx] && exercises[exIdx].name;
         if (!exName || !state.sessionData[exName]) return;
-        state.sessionData[exName][seriesIdx] = {
-          ...state.sessionData[exName][seriesIdx],
-          [field]: e.target.value
-        };
+        state.sessionData[exName][seriesIdx][field] = e.target.value;
         saveState();
       });
 
@@ -1009,6 +944,82 @@
         if (!e.target.classList.contains('kg-input')) return;
         if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
       });
+    }
+
+    function renderExerciseBlock(ex, exIdx, badge, data) {
+      var seriesHTML = ex.series.map(function(s, seriesIdx) {
+        return renderSeriesRow(ex, exIdx, s, seriesIdx, data);
+      }).join('');
+
+      return '<div class="exercise-block">' +
+        '<div class="exercise-header">' +
+          '<div class="exercise-header-left">' +
+            '<div class="exercise-name-main">' + ex.name + '</div>' +
+            '<div class="exercise-note">' + ex.note + '</div>' +
+          '</div>' +
+          '<span class="badge" style="background:' + badge.color + '22;color:' + badge.color + ';border:1px solid ' + badge.color + '44">' + badge.label + '</span>' +
+        '</div>' +
+        seriesHTML +
+      '</div>';
+    }
+
+    function renderSeriesRow(ex, exIdx, s, seriesIdx, data) {
+      var key = exIdx + '-' + seriesIdx;
+      var activeTimer = state.timers[key];
+      var dropClass = s.drop ? ' drop' : '';
+
+      // Input HTML
+      var inputHTML = '';
+      if (ex.type === 'superset') {
+        var labels = SUPERSET_LABELS[ex.name] || ['A', 'B'];
+        var val1 = (data[seriesIdx] && data[seriesIdx].weight) || '';
+        var val2 = (data[seriesIdx] && data[seriesIdx].weight2) || '';
+        inputHTML = '<div style="display:flex;align-items:center;gap:3px">' +
+          '<input type="number" class="input-superset kg-input" placeholder="' + labels[0] + '" value="' + val1 + '" data-ex="' + exIdx + '" data-series="' + seriesIdx + '" data-field="weight">' +
+          '<span style="color:var(--border);font-size:11px">+</span>' +
+          '<input type="number" class="input-superset kg-input" placeholder="' + labels[1] + '" value="' + val2 + '" data-ex="' + exIdx + '" data-series="' + seriesIdx + '" data-field="weight2">' +
+          '</div>';
+      } else {
+        var val = (data[seriesIdx] && data[seriesIdx].weight) || '';
+        inputHTML = '<input type="number" class="input-kg kg-input" placeholder="kg" value="' + val + '" data-ex="' + exIdx + '" data-series="' + seriesIdx + '" data-field="weight">';
+      }
+
+      // Timer HTML
+      var timerHTML = '';
+      if (s.rest > 0) {
+        if (activeTimer) {
+          var mins = Math.floor(activeTimer / 60);
+          var secs = activeTimer % 60;
+          var timeStr = mins > 0 ? (mins + ':' + (secs < 10 ? '0' : '') + secs) : (activeTimer + 's');
+          var warningClass = activeTimer <= 10 ? ' warning' : '';
+          var circumference = 2 * Math.PI * 7;
+          var offset = circumference * (1 - activeTimer / s.rest);
+          timerHTML = '<div class="mini-timer' + warningClass + '">' +
+            '<svg class="timer-circle" viewBox="0 0 18 18">' +
+              '<circle cx="9" cy="9" r="7" fill="none" stroke="var(--border)" stroke-width="2.5"/>' +
+              '<circle cx="9" cy="9" r="7" fill="none" stroke="var(--accent)" stroke-width="2.5"' +
+                ' stroke-dasharray="' + circumference + '"' +
+                ' stroke-dashoffset="' + offset + '"' +
+                ' style="transition:stroke-dashoffset 1s linear;transform:rotate(-90deg);transform-origin:50% 50%"/>' +
+            '</svg>' +
+            '<span class="timer-text">' + timeStr + '</span>' +
+            '<div class="timer-controls">' +
+              '<button class="timer-control-btn" onclick="toggleTimer(\'' + key + '\')">⏸</button>' +
+              '<button class="timer-control-btn" onclick="clearTimer(\'' + key + '\')">✕</button>' +
+            '</div>' +
+          '</div>';
+        } else {
+          var restLabel = s.rest >= 60 ? (Math.floor(s.rest / 60) + 'm' + (s.rest % 60 > 0 ? s.rest % 60 + 's' : '')) : (s.rest + 's');
+          timerHTML = '<button class="timer-btn" onclick="startTimer(\'' + key + '\',' + s.rest + ')">⏱ ' + restLabel + '</button>';
+        }
+      }
+
+      return '<div class="series-block' + dropClass + '">' +
+        '<div class="series-number">' + (seriesIdx + 1) + '</div>' +
+        '<div class="series-reps">' + s.reps + ' reps</div>' +
+        inputHTML +
+        timerHTML +
+      '</div>';
     }
 
     function updateSessionData(exName, seriesIdx, field, value) {
