@@ -1,0 +1,49 @@
+{
+  "name": "Gym Tracker - Plan Personalizado",
+  "short_name": "Gym Tracker",
+  "description": "Tu plan de entrenamiento personalizado con timers y seguimiento",
+  "start_url": "/gym-tracker/",
+  "scope": "/gym-tracker/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#6366f1",
+  "background_color": "#0a0a0f",
+  "icons": [
+    {
+      "src": "/gym-tracker/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/gym-tracker/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/gym-tracker/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "form_factor": "narrow"
+    }
+  ],
+  "categories": ["fitness", "lifestyle"],
+  "shortcuts": [
+    {
+      "name": "Sesión 1: Pecho + Hombro",
+      "short_name": "Pecho",
+      "description": "Inicia la sesión de pecho y hombro",
+      "url": "/gym-tracker/?session=1",
+      "icons": [
+        {
+          "src": "/gym-tracker/icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}
