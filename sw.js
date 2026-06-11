@@ -1,21 +1,25 @@
-const CACHE_NAME = 'gym-tracker-v2';
+const CACHE_NAME = 'gym-tracker-v3';
 const ASSETS_TO_CACHE = [
-  '/gym-tracker/',
-  '/gym-tracker/index.html',
   '/gym-tracker/manifest.json',
   '/gym-tracker/icons/icon-192.png',
   '/gym-tracker/icons/icon-512.png'
 ];
 
-// Install: cachear assets estáticos
+// Rutas que siempre deben intentar red primero (HTML = código de la app)
+function isAppShell(url) {
+  return url.pathname.endsWith('/gym-tracker/') ||
+         url.pathname.endsWith('/index.html') ||
+         url.pathname.endsWith('/sw.js');
+}
+
+// Install: cachear solo assets estáticos
 self.addEventListener('install', (event) => {
   console.log('[SW] Installing...');
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('[SW] Caching app shell');
+      console.log('[SW] Caching static assets');
       return cache.addAll(ASSETS_TO_CACHE).catch(err => {
-        console.log('[SW] Cache addAll error (some assets may not exist yet):', err);
-        // No fallar si algunos assets no existen aún
+        console.log('[SW] Cache addAll error:', err);
         return Promise.resolve();
       });
     })
@@ -41,46 +45,43 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch: cache-first (offline-first)
+// Fetch: network-first para HTML/JS de la app, cache-first para assets estáticos
 self.addEventListener('fetch', (event) => {
-  // Solo cachear requests GET
-  if (event.request.method !== 'GET') {
-    return;
-  }
+  if (event.request.method !== 'GET') return;
 
-  event.respondWith(
-    caches.match(event.request).then((response) => {
-      if (response) {
-        console.log('[SW] Serving from cache:', event.request.url);
-        return response;
-      }
+  const url = new URL(event.request.url);
 
-      // No en cache: ir a red
-      return fetch(event.request)
+  if (isAppShell(url)) {
+    // NETWORK-FIRST: siempre intenta traer la versión más reciente del código.
+    // Si no hay red, cae a la última copia cacheada (offline funciona igual).
+    event.respondWith(
+      fetch(event.request)
         .then((response) => {
-          // Clonar la response antes de guardarla (solo consumible una vez)
           const responseToCache = response.clone();
-
-          // Guardar en cache
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
           });
-
           return response;
         })
-        .catch((error) => {
-          console.log('[SW] Fetch failed; serving from cache or offline:', error);
-          // Fallback: servir algo del cache o página offline
-          return caches.match('/gym-tracker/index.html').catch(() => {
-            return new Response('Offline - página no disponible', {
-              status: 503,
-              statusText: 'Service Unavailable',
-              headers: new Headers({
-                'Content-Type': 'text/plain'
-              })
-            });
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // CACHE-FIRST: assets estáticos (iconos, manifest) que casi nunca cambian
+  event.respondWith(
+    caches.match(event.request).then((response) => {
+      if (response) return response;
+
+      return fetch(event.request)
+        .then((response) => {
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
           });
-        });
+          return response;
+        })
+        .catch(() => caches.match(event.request));
     })
   );
 });
