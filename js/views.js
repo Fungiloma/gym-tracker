@@ -3,6 +3,7 @@
 // data-action y las resuelve la delegación de app.js.
 import { PLAN, BADGE, getPlanSession, findPlanExercise } from './plan.js';
 import { draftStats, formatPrevious, formatPreviousShort, formatSeriesLine, fieldsForExerciseId } from './data.js';
+import { sessionVolume, fmtKg } from './stats.js';
 import { formatRest, formatRemaining, ringOffset } from './timers.js';
 
 // Crea un elemento. attrs: class, dataset ({...}) y atributos planos. children: nodos o texto.
@@ -223,12 +224,13 @@ export function formatDate(ts) {
   return new Date(ts).toLocaleDateString('es-ES');
 }
 
-export function renderHistory(container, sessions, expandedIds) {
+// filtered: hay búsqueda o filtro activo, así que una lista vacía no significa "sin historial".
+export function renderHistory(container, sessions, expandedIds, filtered = false) {
   if (sessions.length === 0) {
     container.replaceChildren(h('div', { class: 'empty-state' },
-      h('div', { class: 'empty-state-emoji' }, '📋'),
-      h('div', { class: 'empty-state-title' }, 'Sin historial aún'),
-      h('div', { class: 'empty-state-text' }, 'Completa una sesión para ver el historial'),
+      h('div', { class: 'empty-state-emoji' }, filtered ? '🔍' : '📋'),
+      h('div', { class: 'empty-state-title' }, filtered ? 'Sin resultados' : 'Sin historial aún'),
+      h('div', { class: 'empty-state-text' }, filtered ? 'Prueba con otra búsqueda o quita el filtro' : 'Completa una sesión para ver el historial'),
     ));
     return;
   }
@@ -242,6 +244,7 @@ export function renderHistory(container, sessions, expandedIds) {
         h('div', { class: 'session-info' },
           h('div', { class: 'session-title' }, session.name),
           h('div', { class: 'session-date' }, formatDate(session.startedAt)),
+          sessionVolume(session) > 0 ? h('div', { class: 'session-volume' }, `${fmtKg(sessionVolume(session))} kg de volumen`) : null,
         ),
         h('div', { class: 'session-actions' },
           h('button', { class: 'btn-delete', title: 'Borrar sesión', 'aria-label': 'Borrar sesión', dataset: { action: 'delete-session', id } }, '🗑'),
@@ -287,6 +290,9 @@ export function renderImportPreview(container, preview) {
     h('div', { class: 'import-line' }, `${preview.sessions.length} sesiones válidas en el fichero (formato ${preview.format})`),
     h('div', { class: 'import-line' }, `${preview.fresh.length} nuevas se añadirán`),
     h('div', { class: 'import-line' }, `${preview.duplicates} ya existen y se conservan como están`),
+    preview.freshBody && preview.freshBody.length
+      ? h('div', { class: 'import-line' }, `${preview.freshBody.length} medidas corporales nuevas se añadirán`)
+      : null,
     preview.rejected.length
       ? h('div', { class: 'import-line warn' }, `${preview.rejected.length} rechazadas por datos inválidos`)
       : null,
@@ -295,7 +301,7 @@ export function renderImportPreview(container, preview) {
       list.length > shown.length ? h('li', {}, `… y ${list.length - shown.length} más`) : null,
     ) : null,
     h('div', { class: 'import-actions' },
-      h('button', { class: 'btn btn-primary', dataset: { action: 'import-confirm' }, disabled: preview.fresh.length === 0 }, 'Importar'),
+      h('button', { class: 'btn btn-primary', dataset: { action: 'import-confirm' }, disabled: preview.fresh.length === 0 && !(preview.freshBody && preview.freshBody.length) }, 'Importar'),
       h('button', { class: 'btn btn-secondary', dataset: { action: 'import-cancel' } }, 'Cancelar'),
     ),
   );

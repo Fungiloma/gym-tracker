@@ -3,7 +3,7 @@ import { getPlanSession } from './plan.js';
 import * as storage from './storage.js';
 import {
   createDraft, setDraftValue, draftStats, finalizeDraft, previousFor, buildSummaryText,
-  buildExport, parseImport, mergeSessions, toCSV, hasValues,
+  buildExport, parseImport, mergeSessions, mergeBody, toCSV, hasValues, parseBodyInput, upsertBody, isDateKey,
   toggleSeriesDone, fillSeries, addSeries, removeLastSeries, insertSeries, moveExercise,
   substituteExercise, setNote, defaultRest, restForSeries, MAX_REST,
 } from './data.js';
@@ -12,9 +12,12 @@ import {
   beep, vibrate, unlockAudio,
 } from './timers.js';
 import {
-  h, renderHome, renderSession, renderSeriesRow, renderHistory, renderImportPreview, formatDate,
+  h, renderHome, renderSession, renderSeriesRow, renderImportPreview, formatDate,
   renderRestBar, updateRestBar,
 } from './views.js';
+import { renderHistoryView, TABS } from './history.js';
+import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, dayKey } from './stats.js';
+import { PLAN } from './plan.js';
 
 // ==================== STATE ====================
 // data: datos persistentes (gymtracker.data). draft: sesión en curso (gymtracker.draft).
@@ -31,6 +34,8 @@ let pendingImport = null;
 let substituting = null;
 let summaryShown = false;
 let currentScreen = 'home';
+// Estado de la pantalla de historial (no se guarda): pestaña, filtros y navegación de calendario/semana.
+const view = { tab: 'sessions', search: '', plan: '', exerciseId: null, calYear: 0, calMonth: 0, weekOffset: 0 };
 
 const $ = id => document.getElementById(id);
 const container = () => $('exercises-container');
@@ -88,7 +93,7 @@ function showScreen(name) {
   target.classList.add('active');
   currentScreen = name;
   if (name === 'home') renderHome($('sessions-list'), draft);
-  else if (name === 'history') renderHistory($('history-container'), data.sessions, ui.expandedSessions);
+  else if (name === 'history') openHistory();
   else if (name === 'session') {
     tick();
     ensureLoop();
@@ -214,6 +219,7 @@ function completeSession() {
     toast(`No se pudo guardar la sesión: ${r.error}`, 'error');
     return;
   }
+  const records = detectRecords(data.sessions, r.session);
   data.sessions.push(r.session);
   if (!saveData()) {
     // El borrador se conserva: nada se pierde si falla la escritura.
@@ -225,8 +231,10 @@ function completeSession() {
 
   $('summary-session-name').textContent = r.session.name;
   $('summary-text').textContent = buildSummaryText(r.session, formatDate(r.session.startedAt));
+  renderRecords(records);
   summaryShown = true;
   goScreen('summary', 'replace');
+  if (records.length) toast(`🏅 ${records.length} ${records.length === 1 ? 'récord nuevo' : 'récords nuevos'}`);
 }
 
 // Entero no negativo de un data-* o null.
@@ -501,7 +509,10 @@ function flashCopied(btn) {
 }
 
 function copySummary(btn) {
-  const text = $('summary-text').textContent;
+  copyText($('summary-text').textContent, btn);
+}
+
+function copyText(text, btn) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(() => flashCopied(btn));
     return;
@@ -517,6 +528,128 @@ function copySummary(btn) {
 }
 
 // ==================== HISTORY ====================
+function renderRecords(records) {
+  const box = $('summary-records');
+  if (!records.length) {
+    box.replaceChildren();
+    box.hidden = true;
+    return;
+  }
+  box.replaceChildren(
+    h('div', { class: 'records-title' }, `🏅 ${records.length === 1 ? 'Récord personal' : 'Récords personales'}`),
+    ...records.map(r => h('div', { class: 'record-line' }, formatRecord(r))),
+  );
+  box.hidden = false;
+}
+
+function renderTabs() {
+  $('history-tabs').replaceChildren(...TABS.map(([id, label]) => h('button', {
+    class: 'tab-btn', role: 'tab', 'aria-selected': String(view.tab === id), dataset: { action: 'history-tab', tab: id },
+  }, label)));
+}
+
+function syncHistoryChrome() {
+  renderTabs();
+  $('history-filters').hidden = !(view.tab === 'sessions' || (view.tab === 'exercises' && !view.exerciseId));
+  $('history-plan').hidden = view.tab !== 'sessions';
+  $('body-form').hidden = view.tab !== 'body';
+}
+
+function renderHistoryScreen() {
+  syncHistoryChrome();
+  renderHistoryView($('history-container'), view, data, ui.expandedSessions);
+}
+
+function openHistory() {
+  const now = new Date();
+  view.calYear = now.getFullYear();
+  view.calMonth = now.getMonth();
+  view.weekOffset = 0;
+  view.exerciseId = null;
+  const sel = $('history-plan');
+  if (!sel.options.length) {
+    sel.replaceChildren(h('option', { value: '' }, 'Todas las sesiones'), ...PLAN.map(p => h('option', { value: p.id }, p.name)));
+  }
+  const date = $('body-date');
+  if (!date.value) date.value = dayKey(Date.now());
+  renderHistoryScreen();
+}
+
+function setHistoryTab(tab) {
+  if (!TABS.some(([id]) => id === tab)) return;
+  view.tab = tab;
+  view.exerciseId = null;
+  renderHistoryScreen();
+}
+
+function shiftCalendar(delta) {
+  const d = new Date(view.calYear, view.calMonth + delta, 1);
+  view.calYear = d.getFullYear();
+  view.calMonth = d.getMonth();
+  renderHistoryScreen();
+}
+
+function shiftSummaryWeek(delta) {
+  view.weekOffset = Math.max(0, view.weekOffset + delta);
+  renderHistoryScreen();
+}
+
+function copyWeekly(btn) {
+  const text = buildWeeklySummary(data.sessions, data.body, addWeeks(weekStart(Date.now()), -view.weekOffset));
+  copyText(text, btn);
+}
+
+function saveBody() {
+  const date = $('body-date').value;
+  const err = $('body-error');
+  const raws = {};
+  document.querySelectorAll('#body-form [data-key]').forEach(i => { raws[i.dataset.key] = i.value; });
+  const fail = msg => {
+    err.textContent = msg;
+    err.hidden = false;
+  };
+  if (!isDateKey(date)) return fail('Fecha no válida');
+  const r = parseBodyInput(date, raws);
+  if (!r.ok) return fail(r.error);
+  const before = data.body;
+  data.body = upsertBody(data.body, r.entry);
+  if (!saveData()) {
+    data.body = before;
+    return;
+  }
+  err.hidden = true;
+  document.querySelectorAll('#body-form [data-key]').forEach(i => { i.value = ''; });
+  renderHistoryScreen();
+  toast('Medida guardada');
+}
+
+function deleteBody(date) {
+  const index = data.body.findIndex(b => b.date === date);
+  if (index < 0) return;
+  const before = data.body;
+  const removed = before[index];
+  data.body = before.filter(b => b.date !== date);
+  if (!saveData()) {
+    data.body = before;
+    return;
+  }
+  renderHistoryScreen();
+  toast('Medida borrada', 'info', {
+    label: 'Deshacer',
+    run: () => {
+      if (data.body.some(b => b.date === date)) return;
+      const previous = data.body;
+      data.body = upsertBody(data.body, removed);
+      if (!saveData()) {
+        data.body = previous;
+        return;
+      }
+      renderHistoryScreen();
+      toast('Medida recuperada');
+    },
+  });
+}
+
 function deleteSession(id) {
   if (!data.sessions.some(s => s.id === id)) return;
   const before = data.sessions;
@@ -529,7 +662,7 @@ function deleteSession(id) {
   }
   ui.expandedSessions = ui.expandedSessions.filter(x => x !== id);
   saveUi();
-  renderHistory($('history-container'), data.sessions, ui.expandedSessions);
+  renderHistoryScreen();
   toast('Sesión borrada', 'info', {
     label: 'Deshacer',
     run: () => {
@@ -542,7 +675,7 @@ function deleteSession(id) {
         data.sessions = previous;
         return;
       }
-      renderHistory($('history-container'), data.sessions, ui.expandedSessions);
+      renderHistoryScreen();
       toast('Sesión recuperada');
     },
   });
@@ -554,7 +687,7 @@ function toggleExpandSession(id) {
   if (idx >= 0) ui.expandedSessions.splice(idx, 1);
   else ui.expandedSessions.push(id);
   saveUi();
-  renderHistory($('history-container'), data.sessions, ui.expandedSessions);
+  renderHistoryScreen();
 }
 
 // ==================== EXPORT / IMPORT ====================
@@ -615,22 +748,26 @@ async function readImportFile(input) {
   }
   pendingImport = text === null
     ? { ok: false, error: 'Fichero ilegible o demasiado grande' }
-    : parseImport(text, data.sessions);
+    : parseImport(text, data.sessions, data.body);
   renderImportPreview($('import-preview'), pendingImport);
 }
 
 function confirmImport() {
   if (!pendingImport || !pendingImport.ok) return;
   const before = data.sessions;
+  const beforeBody = data.body;
   const { sessions, added } = mergeSessions(data.sessions, pendingImport.fresh);
+  const merged = mergeBody(data.body, pendingImport.freshBody || []);
   data.sessions = sessions;
+  data.body = merged.body;
   if (!saveData()) {
     data.sessions = before;
+    data.body = beforeBody;
     return;
   }
   cancelImport();
-  renderHistory($('history-container'), data.sessions, ui.expandedSessions);
-  toast(`Importadas ${added} sesiones`);
+  renderHistoryScreen();
+  toast(merged.added ? `Importadas ${added} sesiones y ${merged.added} medidas` : `Importadas ${added} sesiones`);
 }
 
 function cancelImport() {
@@ -662,6 +799,14 @@ const ACTIONS = {
   'toast-undo': () => runToastUndo(),
   'toggle-expand': el => toggleExpandSession(el.dataset.id),
   'delete-session': el => deleteSession(el.dataset.id),
+  'history-tab': el => setHistoryTab(el.dataset.tab),
+  'select-exercise': el => { view.exerciseId = el.dataset.id; renderHistoryScreen(); },
+  'clear-exercise': () => { view.exerciseId = null; renderHistoryScreen(); },
+  'cal-month': el => shiftCalendar(Number(el.dataset.delta)),
+  'summary-week': el => shiftSummaryWeek(Number(el.dataset.delta)),
+  'copy-weekly': el => copyWeekly(el),
+  'save-body': () => saveBody(),
+  'delete-body': el => deleteBody(el.dataset.date),
   'export-json': () => download('json'),
   'export-csv': () => download('csv'),
   'share-json': () => shareJSON(),
@@ -679,6 +824,14 @@ function initEvents() {
   window.addEventListener('popstate', onPopState);
 
   $('import-file').addEventListener('change', e => readImportFile(e.target));
+  $('history-search').addEventListener('input', e => {
+    view.search = e.target.value;
+    renderHistoryScreen();
+  });
+  $('history-plan').addEventListener('change', e => {
+    view.plan = e.target.value;
+    renderHistoryScreen();
+  });
 
   const exercises = container();
 
@@ -751,7 +904,7 @@ function init() {
   if (loaded.source === 'corrupt') {
     toast('Los datos guardados estaban dañados. Se ha guardado una copia en gymtracker.data.backup.', 'error');
   } else if (loaded.rejected.length) {
-    toast(`${loaded.rejected.length} sesiones guardadas no eran válidas y se han apartado.`, 'error');
+    toast(`${loaded.rejected.length} registros guardados no eran válidos y se han apartado.`, 'error');
   }
   if (loaded.source === 'v1') saveData();
 
