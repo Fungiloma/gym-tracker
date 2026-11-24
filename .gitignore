@@ -6,3 +6,6 @@ build/
 .env
 .env.local
 *.pem
+package-lock.json.bak
+test-results/
+playwright-report/
