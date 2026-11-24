@@ -71,8 +71,10 @@ Tu plan de entrenamiento personalizado, instalable como app nativa en iOS y Andr
 
 **Ubicación:** Los datos se guardan en `localStorage` del navegador
 
-- `gym-sessions` — Array con todas las sesiones completadas
-- `gym-state` — Estado actual (sesión activa, expansiones, etc.)
+- `gymtracker.sessions` — Array con todas las sesiones completadas
+- `gymtracker.state` — Estado actual (sesión activa, expansiones, etc.)
+
+Si no existen, la app lee las claves antiguas `gym-sessions` y `gym-state` (no las borra).
 
 **Copia de seguridad:** Abre DevTools (F12) → Application → Storage → copiar los valores JSON
 

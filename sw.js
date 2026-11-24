@@ -1,15 +1,17 @@
-const CACHE_NAME = 'gym-tracker-v3';
+const CACHE_NAME = 'gym-tracker-v4';
 const ASSETS_TO_CACHE = [
   '/gym-tracker/manifest.json',
   '/gym-tracker/icons/icon-192.png',
   '/gym-tracker/icons/icon-512.png'
 ];
 
-// Rutas que siempre deben intentar red primero (HTML = código de la app)
+// Rutas que siempre deben intentar red primero (HTML, JS y CSS = código de la app)
 function isAppShell(url) {
   return url.pathname.endsWith('/gym-tracker/') ||
          url.pathname.endsWith('/index.html') ||
-         url.pathname.endsWith('/sw.js');
+         url.pathname.endsWith('/sw.js') ||
+         url.pathname.endsWith('.js') ||
+         url.pathname.endsWith('.css');
 }
 
 // Install: cachear solo assets estáticos
