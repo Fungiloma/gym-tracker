@@ -58,7 +58,7 @@ try {
 
   await page.getByRole('button', { name: /historial/i }).click();
   await page.waitForSelector('#screen-history.active .session-header');
-  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('gym-sessions')));
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.sessions')));
   assert.equal(stored.length, 1, 'debe haber 1 sesión guardada');
   assert.equal(stored[0].exercises[0].series[0].weight, '42.5');
 

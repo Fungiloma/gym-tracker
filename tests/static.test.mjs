@@ -32,3 +32,30 @@ test('código muerto eliminado de index.html', () => {
   assert.ok(!html.includes('updateSessionData'));
   assert.ok(!html.includes('currentScreen'));
 });
+
+test('index.html sin scripts, estilos ni manejadores inline', () => {
+  const html = read('index.html');
+  assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), 'script inline');
+  assert.ok(!/<style/i.test(html), 'bloque <style>');
+  assert.ok(!/\sstyle\s*=/i.test(html), 'atributo style');
+  assert.ok(!/\son[a-z]+\s*=/i.test(html), 'manejador on*');
+  assert.match(html, /<script type="module" src="js\/app\.js"><\/script>/);
+  assert.match(html, /<link rel="stylesheet" href="css\/app\.css">/);
+});
+
+test('CSP por meta con la política del plan, antes de cualquier recurso', () => {
+  const html = read('index.html');
+  const m = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)">/);
+  assert.ok(m, 'falta meta CSP');
+  assert.equal(m[1], "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; manifest-src 'self'; connect-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'");
+  assert.ok(m.index < html.indexOf('<link'), 'la CSP debe ir antes de los <link>');
+});
+
+test('los módulos JS no usan innerHTML/outerHTML, eval ni estilos por atributo', () => {
+  for (const f of ['plan', 'storage', 'timers', 'views', 'app']) {
+    const src = read(`js/${f}.js`);
+    assert.ok(!/\b(innerHTML|outerHTML|insertAdjacentHTML)\b/.test(src), `${f}.js usa HTML como texto`);
+    assert.ok(!/\beval\s*\(|new Function\s*\(/.test(src), `${f}.js usa eval`);
+    assert.ok(!/setAttribute\(\s*['"]style['"]|\.style\b/.test(src), `${f}.js usa estilos inline`);
+  }
+});
