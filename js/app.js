@@ -1,5 +1,5 @@
 // Punto de entrada: estado, navegación, descanso y delegación de eventos.
-import { getPlanSession } from './plan.js';
+import { getPlanSession, planSessions, setActivePlan, getActivePlan } from './plan.js';
 import * as storage from './storage.js';
 import {
   createDraft, setDraftValue, draftStats, finalizeDraft, previousFor, buildSummaryText,
@@ -21,8 +21,14 @@ import {
   renderRestBar, updateRestBar, renderNotices,
 } from './views.js';
 import { renderHistoryView, TABS } from './history.js';
+import {
+  usedIds, buildPlanExport, parsePlanImport, resetToDefault, createRoutine, duplicateRoutine, moveRoutine,
+  updateRoutine, removeRoutine, restoreRoutine, addRoutineExercise, removeRoutineExercise, moveRoutineExercise,
+  setRoutineNote, addRoutineSeries, removeRoutineSeries, setRoutineSeries, createExercise, updateExercise,
+  removeExercise, restoreExercise, PLAN_LIMITS,
+} from './routines.js';
+import { renderRoutines, renderRoutineEditor, renderLibrary } from './editor.js';
 import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, dayKey } from './stats.js';
-import { PLAN } from './plan.js';
 
 // ==================== STATE ====================
 // data: datos persistentes (gymtracker.data). draft: sesión en curso (gymtracker.draft).
@@ -42,6 +48,10 @@ let lastSummary = null;
 let platesPrefill = null;
 let sharePreviewUrl = null;
 let currentScreen = 'home';
+// Editor del plan (no se guarda): rutina abierta, ejercicio desplegado en la biblioteca e import pendiente.
+let editingRoutine = null;
+let editingExercise = null;
+let pendingPlanImport = null;
 // Estado de la pantalla de historial (no se guarda): pestaña, filtros y navegación de calendario/semana.
 const view = { tab: 'sessions', search: '', plan: '', exerciseId: null, calYear: 0, calMonth: 0, weekOffset: 0 };
 
@@ -87,6 +97,193 @@ function repaintAll() {
   if (currentScreen === 'home') renderHome($('sessions-list'), draft);
   if (currentScreen === 'history') renderHistoryScreen();
   renderHomeNotices();
+}
+
+// ==================== EDITOR DEL PLAN ====================
+const used = () => usedIds(data.sessions, draft);
+
+function renderEditorScreen(name = currentScreen) {
+  const plan = getActivePlan();
+  if (name === 'routines') {
+    renderRoutines($('routines-container'), plan, { used: used(), preview: pendingPlanImport });
+  } else if (name === 'routine') {
+    const r = getPlanSession(editingRoutine);
+    $('routine-title').textContent = r ? r.name : 'Editar rutina';
+    renderRoutineEditor($('routine-container'), plan, editingRoutine);
+  } else if (name === 'library') {
+    renderLibrary($('library-container'), plan, { used: used(), editing: editingExercise });
+  }
+}
+
+// Guarda y activa el plan resultante de una operación de routines.js. false si no era válido o no se guardó.
+function commitPlan(r) {
+  if (!r || !r.ok) {
+    toast(r && r.error ? r.error : 'Cambio no válido', 'error');
+    return false;
+  }
+  if (!reportSave(storage.savePlan(r.plan), 'el plan')) return false;
+  setActivePlan(r.plan);
+  return true;
+}
+
+function planAction(r, message) {
+  if (!commitPlan(r)) return false;
+  renderEditorScreen();
+  if (message) toast(message);
+  return true;
+}
+
+function createRoutineAction() {
+  const input = $('new-routine-name');
+  const r = createRoutine(getActivePlan(), input ? input.value : '', used());
+  if (!commitPlan(r)) return;
+  editingRoutine = r.id;
+  goScreen('routine');
+}
+
+function editRoutine(id) {
+  if (!getPlanSession(id)) return;
+  editingRoutine = id;
+  goScreen('routine');
+}
+
+function removeRoutineAction(id) {
+  const r = getPlanSession(id);
+  if (!r) return;
+  const archive = used().routines.has(id);
+  if (!confirm(archive
+    ? `${r.name} tiene sesiones en el historial. ¿Archivarla? Saldrá de la pantalla de inicio y su historial se conserva.`
+    : `¿Borrar la rutina ${r.name}?`)) return;
+  const res = removeRoutine(getActivePlan(), id, used(), draft && draft.planSessionId);
+  planAction(res, res.ok ? (res.action === 'archived' ? 'Rutina archivada' : 'Rutina borrada') : null);
+}
+
+function addExerciseToRoutine() {
+  const sel = $('add-exercise-select');
+  if (!sel) return;
+  if (planAction(addRoutineExercise(getActivePlan(), editingRoutine, sel.value))) {
+    const blocks = $('routine-container').querySelectorAll('.editor-ex');
+    if (blocks.length) blocks[blocks.length - 1].scrollIntoView({ block: 'center' });
+  }
+}
+
+function createExerciseAction() {
+  const name = $('new-exercise-name');
+  const type = $('library-container').querySelector('[data-new="type"]');
+  const muscles = [...$('library-container').querySelectorAll('[data-muscles="new"] input:checked')].map(i => i.value);
+  const r = createExercise(getActivePlan(), { name: name ? name.value : '', type: type ? type.value : 'traditional', muscles });
+  planAction(r, r.ok ? 'Ejercicio añadido' : null);
+}
+
+function removeExerciseAction(id) {
+  const plan = getActivePlan();
+  const e = plan.exercises.find(x => x.id === id);
+  if (!e) return;
+  const archive = used().exercises.has(id);
+  if (!confirm(archive
+    ? `${e.name} tiene historial. ¿Archivarlo? No se borra nada del historial.`
+    : `¿Borrar ${e.name} de la biblioteca?`)) return;
+  const r = removeExercise(plan, id, used());
+  if (r.ok && editingExercise === id) editingExercise = null;
+  planAction(r, r.ok ? (r.action === 'archived' ? 'Ejercicio archivado' : 'Ejercicio borrado') : null);
+}
+
+function toggleExerciseEdit(id) {
+  editingExercise = editingExercise === id ? null : id;
+  renderEditorScreen('library');
+}
+
+// Cambios en campos del editor (data-edit). Los de texto no repintan para no robar el foco al siguiente campo.
+function onPlanEdit(el) {
+  const plan = getActivePlan();
+  const rid = editingRoutine;
+  const ex = idx(el.dataset.ex);
+  const k = idx(el.dataset.series);
+  const id = el.dataset.id;
+  let r;
+  let repaint = false;
+  switch (el.dataset.edit) {
+    case 'routine-name': r = updateRoutine(plan, rid, { name: el.value }); break;
+    case 'routine-emoji': r = updateRoutine(plan, rid, { emoji: el.value }); break;
+    case 'routine-duration': r = updateRoutine(plan, rid, { duration: el.value }); break;
+    case 'routine-note': r = setRoutineNote(plan, rid, ex, el.value); break;
+    case 'series-reps': r = setRoutineSeries(plan, rid, ex, k, 'reps', el.value); break;
+    case 'series-rest': r = setRoutineSeries(plan, rid, ex, k, 'rest', el.value); break;
+    case 'series-drop': r = setRoutineSeries(plan, rid, ex, k, 'drop', el.checked); break;
+    case 'exercise-name': r = updateExercise(plan, id, { name: el.value }); break;
+    case 'exercise-type': r = updateExercise(plan, id, { type: el.value }); repaint = true; break;
+    case 'exercise-muscles': {
+      const group = el.closest('[data-muscles]');
+      r = updateExercise(plan, id, { muscles: [...group.querySelectorAll('input:checked')].map(i => i.value) });
+      repaint = true;
+      break;
+    }
+    default: return;
+  }
+  if (!commitPlan(r)) {
+    renderEditorScreen();
+    return;
+  }
+  if (repaint) {
+    renderEditorScreen();
+    return;
+  }
+  if (el.type === 'text') el.value = el.value.trim();
+  if (el.dataset.edit === 'routine-name') $('routine-title').textContent = el.value;
+  if (el.dataset.edit === 'exercise-name') {
+    const title = el.closest('.editor-row').querySelector('.editor-row-title');
+    if (title) title.textContent = el.value;
+  }
+}
+
+function planFile() {
+  return new File([JSON.stringify(buildPlanExport(getActivePlan()), null, 2)], `gym-tracker-plan-${stamp()}.json`, { type: 'application/json' });
+}
+
+function exportPlan() {
+  const file = planFile();
+  const url = URL.createObjectURL(file);
+  const a = h('a', { href: url, download: file.name });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('Plan exportado');
+}
+
+async function readPlanFile(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  let text;
+  try {
+    text = file.size > PLAN_LIMITS.importBytes ? null : await file.text();
+  } catch {
+    text = null;
+  }
+  pendingPlanImport = text === null
+    ? { ok: false, error: 'Fichero ilegible o demasiado grande' }
+    : parsePlanImport(text, getActivePlan(), used());
+  renderEditorScreen('routines');
+  const box = $('plan-import-preview');
+  if (box) box.scrollIntoView({ block: 'center' });
+}
+
+function confirmPlanImport() {
+  if (!pendingPlanImport || !pendingPlanImport.ok) return;
+  const r = { ok: true, plan: pendingPlanImport.plan };
+  pendingPlanImport = null;
+  planAction(r, 'Plan importado');
+}
+
+function cancelPlanImport() {
+  pendingPlanImport = null;
+  renderEditorScreen('routines');
+}
+
+function resetPlan() {
+  if (!confirm('¿Volver al plan original? Se sustituyen tus rutinas y biblioteca; lo que use tu historial se conserva archivado. Exporta el plan antes si quieres guardarlo.')) return;
+  planAction(resetToDefault(getActivePlan(), used()), 'Plan original restablecido');
 }
 
 function renderHomeNotices() {
@@ -152,6 +349,7 @@ function showScreen(name) {
   else if (name === 'history') openHistory();
   else if (name === 'settings') renderSettings($('settings-container'), settings());
   else if (name === 'plates') showPlates();
+  else if (name === 'routines' || name === 'routine' || name === 'library') renderEditorScreen(name);
   else if (name === 'session') {
     tick();
     ensureLoop();
@@ -182,6 +380,7 @@ function goBack() {
 
 function onPopState(e) {
   let name = (e.state && e.state.screen) || 'home';
+  if (name === 'routine' && !getPlanSession(editingRoutine)) name = 'routines';
   if ((name === 'session' && !draft) || (name === 'summary' && !summaryShown)) {
     name = 'home';
     history.replaceState({ screen: 'home', depth: 0 }, '');
@@ -194,6 +393,10 @@ function onPopState(e) {
 function startSession(planId) {
   const plan = getPlanSession(planId);
   if (!plan) return;
+  if (!plan.exercises.length) {
+    toast('Esta rutina no tiene ejercicios. Añádelos en Rutinas y ejercicios.', 'error');
+    return;
+  }
   if (draft) {
     if (draft.planSessionId === planId) {
       resumeSession();
@@ -243,6 +446,7 @@ function renderSessionView() {
   const el = container();
   const top = el.scrollTop;
   renderSession(el, draft, {
+    routineId: draft.planSessionId,
     previous: previousFor(data.sessions, draft.planSessionId),
     restOf,
     substituting,
@@ -645,10 +849,12 @@ function openHistory() {
   view.calMonth = now.getMonth();
   view.weekOffset = 0;
   view.exerciseId = null;
+  // Las rutinas se pueden editar: la lista se rehace cada vez (las archivadas siguen en el historial).
   const sel = $('history-plan');
-  if (!sel.options.length) {
-    sel.replaceChildren(h('option', { value: '' }, 'Todas las sesiones'), ...PLAN.map(p => h('option', { value: p.id }, p.name)));
-  }
+  const routines = planSessions({ archived: true });
+  if (view.plan && !routines.some(p => p.id === view.plan)) view.plan = '';
+  sel.replaceChildren(h('option', { value: '' }, 'Todas las sesiones'), ...routines.map(p => h('option', { value: p.id }, p.name)));
+  sel.value = view.plan;
   const date = $('body-date');
   if (!date.value) date.value = dayKey(Date.now());
   renderHistoryScreen();
@@ -1055,6 +1261,26 @@ const ACTIONS = {
   'import-open': () => $('import-file').click(),
   'import-confirm': () => confirmImport(),
   'import-cancel': () => cancelImport(),
+  'routine-create': () => createRoutineAction(),
+  'routine-edit': el => editRoutine(el.dataset.id),
+  'routine-duplicate': el => { const r = duplicateRoutine(getActivePlan(), el.dataset.id, used()); planAction(r, r.ok ? 'Rutina duplicada' : null); },
+  'routine-move': el => planAction(moveRoutine(getActivePlan(), el.dataset.id, Number(el.dataset.dir))),
+  'routine-remove': el => removeRoutineAction(el.dataset.id),
+  'routine-restore': el => planAction(restoreRoutine(getActivePlan(), el.dataset.id), 'Rutina restaurada'),
+  'routine-ex-add': () => addExerciseToRoutine(),
+  'routine-ex-remove': el => planAction(removeRoutineExercise(getActivePlan(), editingRoutine, idx(el.dataset.ex))),
+  'routine-ex-move': el => planAction(moveRoutineExercise(getActivePlan(), editingRoutine, idx(el.dataset.ex), Number(el.dataset.dir))),
+  'routine-series-add': el => planAction(addRoutineSeries(getActivePlan(), editingRoutine, idx(el.dataset.ex))),
+  'routine-series-remove': el => planAction(removeRoutineSeries(getActivePlan(), editingRoutine, idx(el.dataset.ex), idx(el.dataset.series))),
+  'exercise-create': () => createExerciseAction(),
+  'exercise-toggle': el => toggleExerciseEdit(el.dataset.id),
+  'exercise-remove': el => removeExerciseAction(el.dataset.id),
+  'exercise-restore': el => planAction(restoreExercise(getActivePlan(), el.dataset.id), 'Ejercicio restaurado'),
+  'plan-export': () => exportPlan(),
+  'plan-import-open': () => $('plan-import-file').click(),
+  'plan-import-confirm': () => confirmPlanImport(),
+  'plan-import-cancel': () => cancelPlanImport(),
+  'plan-reset': () => resetPlan(),
 };
 
 function initEvents() {
@@ -1066,6 +1292,20 @@ function initEvents() {
   window.addEventListener('popstate', onPopState);
 
   $('import-file').addEventListener('change', e => readImportFile(e.target));
+  $('plan-import-file').addEventListener('change', e => readPlanFile(e.target));
+  for (const id of ['routines-container', 'routine-container', 'library-container']) {
+    $(id).addEventListener('change', e => {
+      if (e.target.dataset && e.target.dataset.edit) onPlanEdit(e.target);
+    });
+    $(id).addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+      if (e.target.id === 'new-routine-name') createRoutineAction();
+      else if (e.target.id === 'new-exercise-name') createExerciseAction();
+      else if (e.target.type === 'text') e.target.blur();
+      else return;
+      e.preventDefault();
+    });
+  }
   $('plates-container').addEventListener('input', e => {
     if (e.target.classList.contains('plates-input')) updatePlates();
   });
@@ -1146,6 +1386,9 @@ function registerServiceWorker() {
 
 // ==================== INIT ====================
 function init() {
+  // El plan va primero: el lector v1 y el borrador lo consultan.
+  const plan = storage.loadPlan();
+  setActivePlan(plan.plan);
   const loaded = storage.loadData();
   data = loaded.data;
   if (loaded.source === 'corrupt') {
@@ -1154,6 +1397,9 @@ function init() {
     toast(`${loaded.rejected.length} registros guardados no eran válidos y se han apartado.`, 'error');
   }
   if (loaded.source === 'v1') saveData();
+  if (plan.source === 'corrupt') {
+    toast('El plan guardado estaba dañado. Se usa el plan original y se ha guardado una copia en gymtracker.plan.backup.', 'error');
+  }
 
   applyAppearance();
   draft = storage.loadDraft();

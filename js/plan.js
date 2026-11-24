@@ -1,10 +1,22 @@
-// Plan de entrenamiento: datos estáticos, sin acceso al DOM.
-// Sesiones y ejercicios llevan ids estables: el historial se enlaza por id, no por nombre.
+// Plan de entrenamiento: biblioteca de ejercicios y rutinas. Sin acceso al DOM ni al almacenamiento.
+//
+// Plan    = { planVersion: 1, exercises: LibraryExercise[], routines: Routine[] }
+// LibraryExercise = { id, name, type, muscles: string[], fields?: Field[], archived?: true }
+// Routine = { id, name, emoji, duration, archived?: true, exercises: RoutineEntry[] }
+// RoutineEntry = { exerciseId, note, series: [{ reps, rest, drop? }] }
+//
+// El historial se enlaza por id (sesión → routine.id, ejercicio → LibraryExercise.id), nunca por nombre:
+// renombrar no rompe nada y un ejercicio o rutina con historial no se borra, se archiva.
+//
+// El plan activo vive en este módulo. Por defecto es DEFAULT_ROUTINES (el plan original); app.js lo
+// sustituye al arrancar con el guardado en gymtracker.plan. Las consultas devuelven vistas "resueltas"
+// (cada ejercicio de una rutina con los datos de la biblioteca), con la misma forma que el plan antiguo.
 //
 // fields: qué se apunta en cada serie y en qué campo del esquema v2 se guarda.
 // Por defecto kg + reps. Las superseries declaran sus dos campos en el mismo orden que
 // las etiquetas de la v1 (weight, weight2), lo que permite al lector v1 reubicar las reps
 // que la v1 guardaba como kg.
+export const PLAN_VERSION = 1;
 const KG = { key: 'weight', unit: 'kg', label: 'kg' };
 const REPS = { key: 'repsDone', unit: 'reps', label: 'reps' };
 export const DEFAULT_FIELDS = [KG, REPS];
@@ -12,7 +24,7 @@ export const DEFAULT_FIELDS = [KG, REPS];
 const s = (reps, rest, drop) => (drop ? { reps, rest, drop: true } : { reps, rest });
 const rep = (n, reps, rest) => Array.from({ length: n }, () => s(reps, rest));
 
-export const PLAN = [
+const DEFAULT_ROUTINES = [
   {
     id: 'pecho-hombro', name: 'Sesión 1: Pecho + Hombro', emoji: '🏋️', duration: 75,
     exercises: [
@@ -93,29 +105,119 @@ export const BADGE = {
   circuit:     { label: 'Circuito' },
 };
 
+const clone = v => JSON.parse(JSON.stringify(v));
+
+// Convierte la forma antigua (ejercicios completos dentro de cada sesión) en biblioteca + rutinas.
+function fromLegacy(list) {
+  const exercises = [];
+  const seen = new Set();
+  const routines = list.map(p => ({
+    id: p.id, name: p.name, emoji: p.emoji, duration: p.duration,
+    exercises: p.exercises.map(ex => {
+      if (!seen.has(ex.id)) {
+        seen.add(ex.id);
+        const lib = { id: ex.id, name: ex.name, type: ex.type, muscles: [...ex.muscles] };
+        if (ex.fields) lib.fields = clone(ex.fields);
+        exercises.push(lib);
+      }
+      return { exerciseId: ex.id, note: ex.note, series: clone(ex.series) };
+    }),
+  }));
+  return { planVersion: PLAN_VERSION, exercises, routines };
+}
+
+// Plan por defecto (copia nueva en cada llamada).
+export function defaultPlan() {
+  return fromLegacy(DEFAULT_ROUTINES);
+}
+
+// ==================== PLAN ACTIVO ====================
+let active = null;
+let library = new Map();
+let routines = [];
+
+// Vista de una rutina: { id, name, emoji, duration, archived, exercises: [{ ...biblioteca, series, note }] }.
+function resolveRoutine(r) {
+  return {
+    id: r.id, name: r.name, emoji: r.emoji, duration: r.duration, archived: !!r.archived,
+    exercises: r.exercises.map(e => {
+      const lib = library.get(e.exerciseId);
+      return { ...lib, archived: !!lib.archived, series: e.series, note: e.note };
+    }),
+  };
+}
+
+// Fija el plan activo. Debe llegar validado (routines.js → validatePlan); no se copia.
+export function setActivePlan(plan) {
+  active = plan;
+  library = new Map(plan.exercises.map(e => [e.id, e]));
+  routines = plan.routines.map(resolveRoutine);
+}
+
+export function getActivePlan() {
+  return active;
+}
+
+setActivePlan(defaultPlan());
+
+// Rutinas resueltas, en orden. Por defecto sin las archivadas.
+export function planSessions({ archived = false } = {}) {
+  return archived ? routines : routines.filter(r => !r.archived);
+}
+
+// Ejercicios de la biblioteca (datos crudos), en orden. Por defecto sin los archivados.
+export function libraryExercises({ archived = false } = {}) {
+  return archived ? active.exercises : active.exercises.filter(e => !e.archived);
+}
+
+export function findLibraryExercise(id) {
+  return library.get(id) || null;
+}
+
+// Búsqueda por nombre sin distinguir mayúsculas; incluye archivados (así un nombre conocido reusa su id).
+export function findLibraryExerciseByName(name) {
+  const n = String(name).trim().toLowerCase();
+  return active.exercises.find(e => e.name.toLowerCase() === n) || null;
+}
+
+// Rutina por id, incluidas las archivadas (el historial y el borrador las siguen necesitando).
 export function getPlanSession(id) {
-  return PLAN.find(p => p.id === id) || null;
+  return routines.find(p => p.id === id) || null;
 }
 
+// Lector v1: la v1 guardaba el nombre de la sesión. Se busca en el plan activo y luego en el original.
 export function findPlanSessionByName(name) {
-  return PLAN.find(p => p.name === name) || null;
+  const hit = routines.find(p => p.name === name);
+  if (hit) return hit;
+  const legacy = DEFAULT_ROUTINES.find(p => p.name === name);
+  return legacy ? { ...legacy, archived: false } : null;
 }
 
-// Busca un ejercicio por id en todo el plan (los ids son únicos entre sesiones).
+// Ejercicio por id con series y nota de la primera rutina activa que lo usa (o de una archivada).
+// Si no está en ninguna rutina, series vacías. null si no está en la biblioteca.
 export function findPlanExercise(id) {
-  for (const p of PLAN) {
-    const ex = p.exercises.find(e => e.id === id);
+  const lib = library.get(id);
+  if (!lib) return null;
+  const inRoutine = r => r.exercises.find(e => e.id === id);
+  for (const r of [...routines.filter(x => !x.archived), ...routines.filter(x => x.archived)]) {
+    const ex = inRoutine(r);
     if (ex) return ex;
   }
-  return null;
+  return { ...lib, archived: !!lib.archived, series: [], note: '' };
+}
+
+// Ejercicio dentro de una rutina concreta (series y nota de esa rutina) o, si no está, el general.
+export function routineExercise(routineId, id) {
+  const r = getPlanSession(routineId);
+  return (r && r.exercises.find(e => e.id === id)) || findPlanExercise(id);
 }
 
 export function fieldsFor(ex) {
   return (ex && Array.isArray(ex.fields)) ? ex.fields : DEFAULT_FIELDS;
 }
 
-// Músculos de un ejercicio por id (vacío si no está en el plan).
+// Músculos de un ejercicio por id (vacío si no está en la biblioteca).
 export function musclesOf(exerciseId) {
-  const ex = findPlanExercise(exerciseId);
+  const ex = library.get(exerciseId);
   return ex && Array.isArray(ex.muscles) ? ex.muscles : [];
 }

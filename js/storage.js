@@ -2,9 +2,13 @@
 // - gymtracker.data   datos: { schemaVersion, sessions, settings }
 // - gymtracker.draft  sesión en curso (borrador), separada de los datos
 // - gymtracker.ui     estado de interfaz: descanso activo, descansos por ejercicio y tarjetas expandidas
+// - gymtracker.plan   plan editable { planVersion, exercises, routines }; solo existe si el usuario lo
+//                     ha editado o importado. Sin él se usa el plan por defecto de plan.js.
 // Las claves v1 (gymtracker.sessions/state y gym-sessions/state) solo se leen, nunca se
 // escriben ni se borran. Si gymtracker.data está dañado, se copia tal cual a
-// gymtracker.data.backup antes de que nada lo pueda sobrescribir.
+// gymtracker.data.backup antes de que nada lo pueda sobrescribir (igual con gymtracker.plan).
+import { defaultPlan } from './plan.js';
+import { validatePlan } from './routines.js';
 import { emptyData, tryValidateData, fromV1Sessions, restoreDraft, isPlainObject, isId, MAX_REST } from './data.js';
 import { sanitizeTimer } from './timers.js';
 
@@ -13,6 +17,8 @@ export const KEYS = {
   draft: 'gymtracker.draft',
   ui: 'gymtracker.ui',
   backup: 'gymtracker.data.backup',
+  plan: 'gymtracker.plan',
+  planBackup: 'gymtracker.plan.backup',
 };
 
 export const V1_KEYS = {
@@ -92,6 +98,27 @@ export function loadData(storage = defaultStorage()) {
 
 export function saveData(data, storage = defaultStorage()) {
   return put(storage, KEYS.data, JSON.stringify(data));
+}
+
+// Devuelve { plan, source } con source: 'stored' | 'default' | 'corrupt'. Un plan guardado que no
+// valida se copia a gymtracker.plan.backup y se usa el de por defecto (el historial no se toca).
+export function loadPlan(storage = defaultStorage()) {
+  const raw = get(storage, KEYS.plan);
+  if (raw === null) return { plan: defaultPlan(), source: 'default' };
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+  const r = validatePlan(parsed);
+  if (r.ok) return { plan: r.plan, source: 'stored' };
+  put(storage, KEYS.planBackup, raw);
+  return { plan: defaultPlan(), source: 'corrupt', error: r.error };
+}
+
+export function savePlan(plan, storage = defaultStorage()) {
+  return put(storage, KEYS.plan, JSON.stringify(plan));
 }
 
 export function loadDraft(storage = defaultStorage()) {
