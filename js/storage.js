@@ -1,11 +1,12 @@
 // Persistencia en localStorage (esquema v2).
 // - gymtracker.data   datos: { schemaVersion, sessions, settings }
 // - gymtracker.draft  sesión en curso (borrador), separada de los datos
-// - gymtracker.ui     estado de interfaz: temporizadores y tarjetas expandidas
+// - gymtracker.ui     estado de interfaz: descanso activo, descansos por ejercicio y tarjetas expandidas
 // Las claves v1 (gymtracker.sessions/state y gym-sessions/state) solo se leen, nunca se
 // escriben ni se borran. Si gymtracker.data está dañado, se copia tal cual a
 // gymtracker.data.backup antes de que nada lo pueda sobrescribir.
-import { emptyData, tryValidateData, fromV1Sessions, restoreDraft, isPlainObject } from './data.js';
+import { emptyData, tryValidateData, fromV1Sessions, restoreDraft, isPlainObject, isId, MAX_REST } from './data.js';
+import { sanitizeTimer } from './timers.js';
 
 export const KEYS = {
   data: 'gymtracker.data',
@@ -118,6 +119,8 @@ export function clearDraft(storage = defaultStorage()) {
 export function loadUi(defaults, storage = defaultStorage()) {
   const raw = get(storage, KEYS.ui);
   const out = { ...defaults };
+  if (isPlainObject(defaults.restByExercise)) out.restByExercise = { ...defaults.restByExercise };
+  if (Array.isArray(defaults.expandedSessions)) out.expandedSessions = [...defaults.expandedSessions];
   if (raw === null) return out;
   try {
     const saved = JSON.parse(raw);
@@ -125,7 +128,14 @@ export function loadUi(defaults, storage = defaultStorage()) {
     if (Array.isArray(saved.expandedSessions)) {
       out.expandedSessions = saved.expandedSessions.filter(x => typeof x === 'string');
     }
-    if (isPlainObject(saved.timers)) out.timers = saved.timers;
+    out.timer = sanitizeTimer(saved.timer);
+    if (isPlainObject(saved.restByExercise)) {
+      out.restByExercise = {};
+      for (const [id, sec] of Object.entries(saved.restByExercise)) {
+        if (isId(id) && Number.isInteger(sec) && sec >= 0 && sec <= MAX_REST) out.restByExercise[id] = sec;
+      }
+    }
+    if (typeof saved.notifAsked === 'boolean') out.notifAsked = saved.notifAsked;
   } catch (e) {
     console.warn('Error loading ui state:', e);
   }

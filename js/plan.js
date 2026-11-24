@@ -99,13 +99,3 @@ export function findPlanExercise(id) {
 export function fieldsFor(ex) {
   return (ex && Array.isArray(ex.fields)) ? ex.fields : DEFAULT_FIELDS;
 }
-
-// Descanso de la serie identificada por la clave "ejercicio-serie" del plan, o null.
-export function restFor(planSessionId, key) {
-  const m = /^(\d+)-(\d+)$/.exec(String(key));
-  if (!m) return null;
-  const p = getPlanSession(planSessionId);
-  const ex = p && p.exercises[Number(m[1])];
-  const serie = ex && ex.series[Number(m[2])];
-  return serie && serie.rest > 0 ? serie.rest : null;
-}

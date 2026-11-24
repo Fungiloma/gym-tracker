@@ -44,10 +44,14 @@
     <!-- SESSION SCREEN -->
     <div class="screen" id="screen-session">
       <header>
-        <button class="btn btn-back" data-action="go-screen" data-screen="home">← Volver</button>
-        <div>
+        <button class="btn btn-back" data-action="go-back">← Volver</button>
+        <div class="session-header-main">
           <div id="session-header-title" class="session-header-title"></div>
           <div id="session-header-count" class="session-header-count"></div>
+        </div>
+        <div class="session-clock" role="timer" aria-label="Duración del entreno">
+          <span class="session-clock-label">Entreno</span>
+          <span id="session-elapsed" class="session-elapsed">0:00</span>
         </div>
       </header>
       <div class="content" id="exercises-container"></div>
@@ -55,12 +59,26 @@
         <button class="btn btn-primary" data-action="complete-session">✅ Guardar sesión y ver feedback</button>
         <button class="btn btn-ghost mt-10" data-action="discard-session">Descartar sesión</button>
       </div>
+      <div class="rest-bar" id="rest-bar" role="timer" aria-label="Descanso" hidden>
+        <svg class="timer-circle" viewBox="0 0 18 18" aria-hidden="true">
+          <circle class="timer-track" cx="9" cy="9" r="7" fill="none" stroke-width="2.5"></circle>
+          <circle class="timer-progress" cx="9" cy="9" r="7" fill="none" stroke-width="2.5" stroke-dasharray="43.98" stroke-dashoffset="0"></circle>
+        </svg>
+        <div class="rest-info">
+          <div class="rest-label" id="rest-label">Descanso</div>
+          <div class="rest-time" id="rest-time">0s</div>
+        </div>
+        <button class="rest-btn" data-action="rest-adjust" data-delta="-15" aria-label="Restar 15 segundos">−15</button>
+        <button class="rest-btn" data-action="rest-adjust" data-delta="15" aria-label="Sumar 15 segundos">+15</button>
+        <button class="rest-btn" id="rest-toggle" data-action="rest-toggle" aria-label="Pausar descanso">⏸</button>
+        <button class="rest-btn" data-action="rest-skip" aria-label="Saltar descanso">✕</button>
+      </div>
     </div>
 
     <!-- SUMMARY SCREEN -->
     <div class="screen" id="screen-summary">
       <header>
-        <button class="btn btn-back" data-action="go-screen" data-screen="home">← Volver</button>
+        <button class="btn btn-back" data-action="go-back">← Volver</button>
         <h1>Sesión completada</h1>
       </header>
       <div class="content">
@@ -88,7 +106,7 @@
     <!-- HISTORY SCREEN -->
     <div class="screen" id="screen-history">
       <header>
-        <button class="btn btn-back" data-action="go-screen" data-screen="home">← Volver</button>
+        <button class="btn btn-back" data-action="go-back">← Volver</button>
         <h1>Historial</h1>
       </header>
       <div class="content">

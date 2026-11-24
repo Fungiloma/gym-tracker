@@ -7,7 +7,7 @@
 //
 // Validación estricta para lo que dice ser v2 (se rechaza la sesión entera si algo no
 // cuadra) y lector tolerante para la v1 (se convierte lo que se pueda).
-import { getPlanSession, findPlanSessionByName, findPlanExercise, fieldsFor } from './plan.js';
+import { PLAN, getPlanSession, findPlanSessionByName, findPlanExercise, fieldsFor } from './plan.js';
 
 export const SCHEMA_VERSION = 2;
 export const SERIES_TYPES = ['normal', 'warmup', 'drop', 'failure'];
@@ -286,12 +286,24 @@ export function fromV1Sessions(list) {
 }
 
 // ==================== BORRADOR ====================
+// Draft   = { schemaVersion, id, planSessionId, startedAt, notes, exercises: DraftExercise[] }
+// DraftExercise = { id, name, notes, substituteFor|null, series: DraftSeries[] }
+// DraftSeries   = Series + rest (segundos de descanso tras la serie; 0 = sin descanso)
+// El borrador es autodescriptivo: se pueden añadir/quitar series, reordenar y sustituir
+// ejercicios sin que el índice siga alineado con el plan.
+export const MAX_REST = 3600;
+
 function blankSeries(planSerie) {
   return {
     type: planSerie.drop ? 'drop' : 'normal',
     target: planSerie.reps,
+    rest: planSerie.rest,
     weight: null, weight2: null, repsDone: null, rpe: null, done: false,
   };
+}
+
+function genericSeries(over = {}) {
+  return { type: 'normal', target: '', rest: 0, weight: null, weight2: null, repsDone: null, rpe: null, done: false, ...over };
 }
 
 export function createDraft(planSessionId, now = Date.now()) {
@@ -303,48 +315,212 @@ export function createDraft(planSessionId, now = Date.now()) {
     planSessionId: p.id,
     startedAt: now,
     notes: '',
-    exercises: p.exercises.map(ex => ({ id: ex.id, notes: '', series: ex.series.map(blankSeries) })),
+    exercises: p.exercises.map(ex => ({
+      id: ex.id, name: ex.name, notes: '', substituteFor: null, series: ex.series.map(blankSeries),
+    })),
   };
 }
 
-// Reconstruye un borrador guardado contra el plan actual. Lo que no encaje se descarta
-// valor a valor; nunca se devuelve un borrador con forma distinta a la del plan.
+function clampText(v, max) {
+  return typeof v === 'string' ? v.slice(0, max) : '';
+}
+
+function restoreSeries(r, ref) {
+  const s = ref ? { ...ref } : genericSeries();
+  if (!isPlainObject(r)) return s;
+  for (const k of VALUE_KEYS) if (inRange(k, r[k])) s[k] = r[k];
+  if (SERIES_TYPES.includes(r.type)) s.type = r.type;
+  if (typeof r.target === 'string') s.target = r.target.slice(0, LIMITS.target);
+  if (Number.isInteger(r.rest) && r.rest >= 0 && r.rest <= MAX_REST) s.rest = r.rest;
+  s.done = typeof r.done === 'boolean' ? r.done : hasValues(s);
+  return s;
+}
+
+function restoreExercise(src, base) {
+  if (!isPlainObject(src) || !isId(src.id)) return null;
+  const planEx = findPlanExercise(src.id);
+  const name = typeof src.name === 'string' && src.name.trim() ? src.name.slice(0, LIMITS.name) : (planEx ? planEx.name : null);
+  if (!name) return null;
+  const ref = base.exercises.find(e => e.id === src.id);
+  const raw = Array.isArray(src.series) ? src.series.slice(0, LIMITS.series) : [];
+  const refAt = i => (ref ? (ref.series[i] || ref.series[ref.series.length - 1]) : null);
+  const series = raw.length
+    ? raw.map((r, i) => restoreSeries(r, refAt(i)))
+    : (ref ? ref.series.map(s => ({ ...s })) : [genericSeries()]);
+  return {
+    id: src.id,
+    name,
+    notes: clampText(src.notes, LIMITS.notes),
+    substituteFor: typeof src.substituteFor === 'string' && src.substituteFor ? src.substituteFor.slice(0, LIMITS.name) : null,
+    series,
+  };
+}
+
+// Reconstruye un borrador guardado. Lo que no encaje se descarta valor a valor; los ejercicios
+// sin forma válida se omiten y, si no queda ninguno, se parte del plan.
 export function restoreDraft(raw, now = Date.now()) {
   if (!isPlainObject(raw) || !isId(raw.planSessionId)) return null;
   const draft = createDraft(raw.planSessionId, isTs(raw.startedAt) ? raw.startedAt : now);
   if (!draft) return null;
   if (isId(raw.id)) draft.id = raw.id;
-  if (typeof raw.notes === 'string') draft.notes = raw.notes.slice(0, LIMITS.notes);
-  const saved = Array.isArray(raw.exercises) ? raw.exercises.filter(isPlainObject) : [];
-  draft.exercises.forEach(ex => {
-    const src = saved.find(e => e.id === ex.id);
-    if (!src) return;
-    if (typeof src.notes === 'string') ex.notes = src.notes.slice(0, LIMITS.notes);
-    const series = Array.isArray(src.series) ? src.series : [];
-    ex.series.forEach((s, i) => {
-      const r = series[i];
-      if (!isPlainObject(r)) return;
-      for (const k of VALUE_KEYS) if (inRange(k, r[k])) s[k] = r[k];
-      if (SERIES_TYPES.includes(r.type)) s.type = r.type;
-      s.done = typeof r.done === 'boolean' ? r.done : hasValues(s);
-    });
-  });
+  draft.notes = clampText(raw.notes, LIMITS.notes);
+  if (Array.isArray(raw.exercises)) {
+    const seen = new Set();
+    const restored = raw.exercises.slice(0, LIMITS.exercises)
+      .map(e => restoreExercise(e, draft))
+      .filter(e => e && !seen.has(e.id) && seen.add(e.id));
+    if (restored.length) draft.exercises = restored;
+  }
   return draft;
 }
 
-// Aplica lo que escribe el usuario en una serie. Solo admite campos declarados por el plan.
-export function setDraftValue(draft, exIdx, seriesIdx, key, raw) {
-  const p = draft && getPlanSession(draft.planSessionId);
-  const planEx = p && p.exercises[exIdx];
+function fieldsAt(draft, exIdx) {
   const ex = draft && draft.exercises[exIdx];
-  const s = ex && ex.series[seriesIdx];
-  if (!planEx || !s || ex.id !== planEx.id) return { ok: false, value: null };
-  if (!fieldsFor(planEx).some(f => f.key === key)) return { ok: false, value: null };
+  return ex ? fieldsForExerciseId(ex.id) : null;
+}
+
+// Aplica lo que escribe el usuario en una serie. Solo admite campos declarados por el ejercicio.
+// Escribir no marca la serie como hecha; vaciar todos los valores sí la desmarca.
+export function setDraftValue(draft, exIdx, seriesIdx, key, raw) {
+  const fields = fieldsAt(draft, exIdx);
+  const s = fields && draft.exercises[exIdx].series[seriesIdx];
+  if (!s || !fields.some(f => f.key === key)) return { ok: false, value: null };
   const r = parseValue(key, raw);
   if (!r.ok) return r;
   s[key] = r.value;
-  s.done = hasValues(s);
+  if (!hasValues(s)) s.done = false;
   return r;
+}
+
+// Copia a la serie los valores de `source` solo en los campos del ejercicio y solo donde
+// la serie está vacía. Devuelve true si cambió algo.
+export function fillSeries(draft, exIdx, seriesIdx, source) {
+  const fields = fieldsAt(draft, exIdx);
+  const s = fields && draft.exercises[exIdx].series[seriesIdx];
+  if (!s || !source) return false;
+  let changed = false;
+  fields.forEach(f => {
+    const v = source[f.key];
+    if ((s[f.key] === null || s[f.key] === undefined) && typeof v === 'number' && inRange(f.key, v)) {
+      s[f.key] = v;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+// Marca o desmarca una serie como hecha. Si está vacía, copia primero la serie de encima
+// (si tiene valores) o, si no, la de la sesión anterior (`fallback`).
+// { ok: true, done, copied } | { ok: false, error: 'empty' | 'invalid' }
+export function toggleSeriesDone(draft, exIdx, seriesIdx, fallback = null) {
+  const ex = draft && draft.exercises[exIdx];
+  const s = ex && ex.series[seriesIdx];
+  if (!s) return { ok: false, error: 'invalid' };
+  if (s.done) {
+    s.done = false;
+    return { ok: true, done: false, copied: false };
+  }
+  let copied = false;
+  if (!hasValues(s)) {
+    const above = seriesIdx > 0 ? ex.series[seriesIdx - 1] : null;
+    copied = fillSeries(draft, exIdx, seriesIdx, above && hasValues(above) ? above : fallback);
+    if (!copied) return { ok: false, error: 'empty' };
+  }
+  s.done = true;
+  return { ok: true, done: true, copied };
+}
+
+// Descanso por defecto de un ejercicio: el mayor descanso de sus series.
+export function defaultRest(ex) {
+  return ex.series.reduce((m, s) => Math.max(m, s.rest || 0), 0);
+}
+
+// Descanso que arranca al hacer una serie: el ajuste del usuario para el ejercicio
+// (0 = sin descanso) o el de la propia serie. null si no hay descanso.
+export function restForSeries(draft, exIdx, seriesIdx, overrides = {}) {
+  const ex = draft && draft.exercises[exIdx];
+  const s = ex && ex.series[seriesIdx];
+  if (!s) return null;
+  const o = overrides && Object.hasOwn(overrides, ex.id) ? overrides[ex.id] : undefined;
+  const sec = Number.isFinite(o) ? o : s.rest;
+  return sec > 0 ? Math.min(sec, MAX_REST) : null;
+}
+
+export function addSeries(draft, exIdx) {
+  const ex = draft && draft.exercises[exIdx];
+  if (!ex || ex.series.length >= LIMITS.series) return false;
+  const lastNormal = [...ex.series].reverse().find(s => s.type === 'normal');
+  ex.series.push(genericSeries({ target: lastNormal ? lastNormal.target : '', rest: defaultRest(ex) }));
+  return true;
+}
+
+// Quita la última serie (nunca la única). Devuelve { index, series } para poder deshacer.
+export function removeLastSeries(draft, exIdx) {
+  const ex = draft && draft.exercises[exIdx];
+  if (!ex || ex.series.length <= 1) return null;
+  const index = ex.series.length - 1;
+  return { index, series: ex.series.pop() };
+}
+
+export function insertSeries(draft, exIdx, index, series) {
+  const ex = draft && draft.exercises[exIdx];
+  if (!ex || ex.series.length >= LIMITS.series) return false;
+  ex.series.splice(Math.min(Math.max(index, 0), ex.series.length), 0, series);
+  return true;
+}
+
+// Mueve un ejercicio una posición (dir -1 o 1). Devuelve el índice nuevo o -1.
+export function moveExercise(draft, exIdx, dir) {
+  const list = draft && draft.exercises;
+  const to = exIdx + dir;
+  if (!list || (dir !== -1 && dir !== 1) || !list[exIdx] || !list[to]) return -1;
+  [list[exIdx], list[to]] = [list[to], list[exIdx]];
+  return to;
+}
+
+export function slugId(name) {
+  const slug = String(name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+  return slug ? `x-${slug}` : `x-${newId().slice(0, 12)}`;
+}
+
+// Sustituye un ejercicio por otro del plan (si el nombre coincide) o por uno libre.
+// Conserva el número de series y su descanso; los valores se vacían.
+// { ok: true, id } | { ok: false, error: 'invalid' | 'name' | 'duplicate' }
+export function substituteExercise(draft, exIdx, rawName) {
+  const ex = draft && draft.exercises[exIdx];
+  if (!ex) return { ok: false, error: 'invalid' };
+  const name = String(rawName ?? '').trim();
+  if (!name || name.length > LIMITS.name) return { ok: false, error: 'name' };
+  let planEx = null;
+  for (const p of PLAN) {
+    planEx = p.exercises.find(e => e.name.toLowerCase() === name.toLowerCase());
+    if (planEx) break;
+  }
+  const id = planEx ? planEx.id : slugId(name);
+  if (id === ex.id) return { ok: true, id, same: true };
+  if (draft.exercises.some(e => e.id === id)) return { ok: false, error: 'duplicate' };
+  const rest = defaultRest(ex);
+  const origin = ex.substituteFor || ex.name;
+  ex.id = id;
+  ex.name = planEx ? planEx.name : name;
+  ex.substituteFor = origin;
+  ex.notes = '';
+  ex.series = ex.series.map(() => genericSeries({ rest }));
+  return { ok: true, id };
+}
+
+export function setNote(draft, exIdx, raw) {
+  const text = typeof raw === 'string' ? raw.slice(0, LIMITS.notes) : '';
+  if (exIdx === null) {
+    if (!draft) return false;
+    draft.notes = text;
+    return true;
+  }
+  const ex = draft && draft.exercises[exIdx];
+  if (!ex) return false;
+  ex.notes = text;
+  return true;
 }
 
 export function draftStats(draft) {
@@ -368,11 +544,14 @@ export function finalizeDraft(draft, now = Date.now()) {
     startedAt: draft.startedAt,
     endedAt: Math.max(now, draft.startedAt),
     notes: draft.notes,
-    exercises: draft.exercises.map((ex, i) => ({
+    exercises: draft.exercises.map(ex => ({
       id: ex.id,
-      name: p.exercises[i].name,
+      name: ex.name,
       notes: ex.notes,
-      series: ex.series.map(s => ({ ...s, done: hasValues(s) })),
+      series: ex.series.map(s => ({
+        type: s.type, target: s.target, weight: s.weight, weight2: s.weight2,
+        repsDone: s.repsDone, rpe: s.rpe, done: hasValues(s),
+      })),
     })),
   });
 }
@@ -418,6 +597,12 @@ export function formatSeriesLine(s, i, fields) {
 export function formatPrevious(s, fields) {
   if (!s || !hasValues(s)) return '';
   return formatSeriesValues(s, fields);
+}
+
+// Texto compacto de la serie anterior para la columna "Anterior" ("22.5 × 8").
+export function formatPreviousShort(s, fields) {
+  if (!s || !hasValues(s)) return '';
+  return fields.filter(f => s[f.key] !== null && s[f.key] !== undefined).map(f => fmtNum(s[f.key])).join(' × ');
 }
 
 export function buildSummaryText(session, dateLabel) {

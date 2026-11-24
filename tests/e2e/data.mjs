@@ -93,10 +93,10 @@ try {
   assert.equal(await kg(0).inputValue(), '50');
   assert.equal(await reps(0).inputValue(), '8');
   assert.equal(await kg(1).inputValue(), '52.5');
-  assert.equal(await page.locator('#screen-session .series-block.done').count(), 2);
+  assert.equal(await page.locator('#screen-session .series-block.done').count(), 0, 'escribir no marca como hecha');
 
   // 2. Volver a home: tarjeta de sesión en curso y reanudar.
-  await page.locator('#screen-session [data-action="go-screen"][data-screen="home"]').click();
+  await page.locator('#screen-session [data-action="go-back"]').click();
   const resume = page.locator('#screen-home [data-action="resume-session"]');
   await resume.waitFor();
   assert.match(await resume.textContent(), /Sesión 1: Pecho \+ Hombro/);
@@ -145,15 +145,19 @@ try {
   assert.equal(data.sessions.length, 1);
   assert.ok(data.sessions[0].endedAt >= data.sessions[0].startedAt);
 
-  // 7. El peso anterior es placeholder, nunca valor.
-  await page.locator('#screen-summary [data-action="go-screen"][data-screen="home"]').click();
+  // 7. El valor anterior va en su columna, nunca como valor: solo se usa al tocarla.
+  await page.locator('#screen-summary [data-action="go-back"]').click();
   await page.locator('.session-btn').first().click();
   await page.waitForSelector('#screen-session.active');
   assert.equal(await kg(0).inputValue(), '');
-  assert.equal(await kg(0).getAttribute('placeholder'), '60');
-  assert.equal(await reps(0).getAttribute('placeholder'), '10');
-  assert.equal(await page.locator('#screen-session .series-block').first().getAttribute('title'), 'anterior: 60kg × 10');
-  assert.equal(await kg(1).getAttribute('placeholder'), 'kg');
+  const prevBtn = page.locator('#screen-session .series-block').first().locator('.prev-btn');
+  assert.equal((await prevBtn.textContent()).trim(), '60 × 10');
+  assert.equal(await page.locator('#screen-session .series-block').nth(1).locator('.prev-empty').count(), 1);
+  assert.equal(await kg(0).getAttribute('placeholder'), 'kg');
+  await prevBtn.click();
+  assert.equal(await kg(0).inputValue(), '60');
+  assert.equal(await reps(0).inputValue(), '10');
+  assert.equal((await ls('gymtracker.draft')).exercises[0].series[0].weight, 60);
   await page.locator('[data-action="discard-session"]').click();
 
   // 8. Export JSON y CSV.
@@ -206,7 +210,7 @@ try {
   assert.equal(await preview.isVisible(), false);
 
   // 11. Cuota llena: aviso visible y el borrador se conserva.
-  await page.locator('#screen-history [data-action="go-screen"][data-screen="home"]').click();
+  await page.locator('#screen-history [data-action="go-back"]').click();
   await page.locator('.session-btn').nth(1).click();
   await page.waitForSelector('#screen-session.active');
   await type(kg(0), '120');
