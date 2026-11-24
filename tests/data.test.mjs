@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN, findPlanExercise, fieldsFor } from '../js/plan.js';
+import { planSessions, findPlanExercise, fieldsFor } from '../js/plan.js';
+const PLAN = planSessions();
 import {
   SCHEMA_VERSION, parseValue, validateSession, validateData, fromV1Sessions, createDraft, restoreDraft,
   setDraftValue, draftStats, finalizeDraft, toggleSeriesDone, fillSeries, addSeries, removeLastSeries, insertSeries,

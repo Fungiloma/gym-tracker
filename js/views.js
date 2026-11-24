@@ -1,7 +1,7 @@
 // Render de pantallas. Todo el texto variable entra con textContent; no se inserta HTML como texto
 // con datos ni se interpolan identificadores en JS. Las acciones se declaran con
 // data-action y las resuelve la delegación de app.js.
-import { PLAN, BADGE, getPlanSession, findPlanExercise } from './plan.js';
+import { BADGE, getPlanSession, planSessions, libraryExercises, routineExercise } from './plan.js';
 import { draftStats, formatPrevious, formatPreviousShort, formatSeriesLine, fieldsForExerciseId } from './data.js';
 import { sessionVolume, fmtKg } from './stats.js';
 import { formatRest, formatRemaining, ringOffset } from './timers.js';
@@ -40,15 +40,23 @@ export function renderHome(container, draft) {
       h('div', { class: 'resume-card-info' }, `Empezada a las ${started} · ${filled}/${total} series apuntadas · Continuar ›`),
     ));
   }
-  PLAN.forEach(p => {
+  const list = planSessions();
+  if (!list.length) {
+    items.push(h('div', { class: 'empty-state' },
+      h('div', { class: 'empty-state-emoji' }, '🗂️'),
+      h('div', { class: 'empty-state-title' }, 'No hay rutinas'),
+      h('div', { class: 'empty-state-text' }, 'Crea una en Rutinas y ejercicios'),
+    ));
+  }
+  list.forEach(p => {
     items.push(h('button', {
       class: 'session-btn' + (p.name.includes('⭐') ? ' star' : '') + (current && current.id === p.id ? ' in-progress' : ''),
       dataset: { action: 'start-session', planId: p.id },
     },
-      h('div', { class: 'session-btn-emoji' }, p.emoji),
+      h('div', { class: 'session-btn-emoji' }, p.emoji || '🏋️'),
       h('div', { class: 'session-btn-content' },
         h('div', { class: 'session-btn-title' }, p.name),
-        h('div', { class: 'session-btn-info' }, `${p.exercises.length} ejercicios · ${p.duration} min`),
+        h('div', { class: 'session-btn-info' }, `${p.exercises.length} ejercicios` + (p.duration ? ` · ${p.duration} min` : '')),
       ),
       h('div', { class: 'session-btn-arrow' }, '›'),
     ));
@@ -57,11 +65,11 @@ export function renderHome(container, draft) {
 }
 
 // ==================== SESSION ====================
-// ctx = { previous: Map id → series de la última sesión, restOf(ex) → segundos de descanso mostrados,
+// ctx = { routineId: rutina del borrador, previous: Map id → series de la última sesión, restOf(ex) → segundos de descanso mostrados,
 //         substituting: índice del ejercicio con el formulario abierto o null,
 //         suggest(ex) → sugerencia de sobrecarga o null, guided: índice del ejercicio visible o null (modo guiado) }
 export function renderSession(container, draft, ctx) {
-  const names = [...new Set(PLAN.flatMap(p => p.exercises.map(e => e.name)))];
+  const names = libraryExercises().map(e => e.name);
   const guided = Number.isInteger(ctx.guided) ? Math.min(Math.max(ctx.guided, 0), draft.exercises.length - 1) : null;
   const count = draft.exercises.length;
   container.replaceChildren(...[
@@ -126,7 +134,7 @@ function exerciseButton(action, exIdx, label, text, extra = {}) {
 }
 
 function buildExerciseBlock(ex, exIdx, count, ctx) {
-  const planEx = findPlanExercise(ex.id);
+  const planEx = routineExercise(ctx.routineId, ex.id);
   const type = planEx ? planEx.type : 'traditional';
   const badge = BADGE[type];
   const fields = fieldsForExerciseId(ex.id);

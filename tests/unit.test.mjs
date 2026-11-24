@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN, getPlanSession, fieldsFor, findPlanExercise } from '../js/plan.js';
+import { planSessions, getPlanSession, fieldsFor, findPlanExercise } from '../js/plan.js';
+const PLAN = planSessions();
 import {
   KEYS, V1_KEYS, LEGACY_KEYS, loadData, saveData, loadDraft, saveDraft, clearDraft, loadUi, saveUi,
 } from '../js/storage.js';

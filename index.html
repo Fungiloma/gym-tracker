@@ -35,6 +35,9 @@
         <button class="btn btn-secondary mt-20 mb-16" data-action="go-screen" data-screen="history">
           📊 Ver historial
         </button>
+        <button class="btn btn-secondary mb-16" data-action="go-screen" data-screen="routines">
+          🗂️ Rutinas y ejercicios
+        </button>
         <button class="btn btn-secondary mb-16" data-action="go-screen" data-screen="settings">
           ⚙️ Ajustes
         </button>
@@ -166,6 +169,34 @@
         <h1>Ajustes</h1>
       </header>
       <div class="content" id="settings-container"></div>
+    </div>
+
+    <!-- ROUTINES SCREEN -->
+    <div class="screen" id="screen-routines">
+      <header>
+        <button class="btn btn-back" data-action="go-back">← Volver</button>
+        <h1>Rutinas y ejercicios</h1>
+      </header>
+      <div class="content" id="routines-container"></div>
+      <input type="file" id="plan-import-file" accept="application/json,.json" hidden>
+    </div>
+
+    <!-- ROUTINE EDITOR SCREEN -->
+    <div class="screen" id="screen-routine">
+      <header>
+        <button class="btn btn-back" data-action="go-back">← Volver</button>
+        <h1 id="routine-title">Editar rutina</h1>
+      </header>
+      <div class="content" id="routine-container"></div>
+    </div>
+
+    <!-- LIBRARY SCREEN -->
+    <div class="screen" id="screen-library">
+      <header>
+        <button class="btn btn-back" data-action="go-back">← Volver</button>
+        <h1>Biblioteca</h1>
+      </header>
+      <div class="content" id="library-container"></div>
     </div>
 
     <!-- PLATES SCREEN -->

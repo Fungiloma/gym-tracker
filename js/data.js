@@ -9,7 +9,7 @@
 //
 // Validación estricta para lo que dice ser v2 (se rechaza la sesión entera si algo no
 // cuadra) y lector tolerante para la v1 (se convierte lo que se pueda).
-import { PLAN, getPlanSession, findPlanSessionByName, findPlanExercise, fieldsFor } from './plan.js';
+import { getPlanSession, findPlanSessionByName, findPlanExercise, findLibraryExerciseByName, fieldsFor } from './plan.js';
 import { kgToDisplay, unitLabel } from './units.js';
 
 export const SCHEMA_VERSION = 2;
@@ -89,7 +89,7 @@ export function applySetting(settings, key, value) {
   return { ok: true, settings: next };
 }
 
-// Campos para ejercicios que ya no están en el plan (historial importado).
+// Campos para ejercicios que no están en la biblioteca (libres o de historial importado).
 export const GENERIC_FIELDS = [
   { key: 'weight', unit: 'kg', label: 'kg' },
   { key: 'weight2', unit: 'kg', label: 'kg' },
@@ -444,7 +444,7 @@ function genericSeries(over = {}) {
   return { type: 'normal', target: '', rest: 0, weight: null, weight2: null, repsDone: null, rpe: null, done: false, ...over };
 }
 
-export function createDraft(planSessionId, now = Date.now()) {
+function baseDraft(planSessionId, now) {
   const p = getPlanSession(planSessionId);
   if (!p) return null;
   return {
@@ -457,6 +457,12 @@ export function createDraft(planSessionId, now = Date.now()) {
       id: ex.id, name: ex.name, notes: '', substituteFor: null, series: ex.series.map(blankSeries),
     })),
   };
+}
+
+// Borrador nuevo de una rutina. null si la rutina no existe o no tiene ejercicios.
+export function createDraft(planSessionId, now = Date.now()) {
+  const d = baseDraft(planSessionId, now);
+  return d && d.exercises.length ? d : null;
 }
 
 function clampText(v, max) {
@@ -498,7 +504,8 @@ function restoreExercise(src, base) {
 // sin forma válida se omiten y, si no queda ninguno, se parte del plan.
 export function restoreDraft(raw, now = Date.now()) {
   if (!isPlainObject(raw) || !isId(raw.planSessionId)) return null;
-  const draft = createDraft(raw.planSessionId, isTs(raw.startedAt) ? raw.startedAt : now);
+  // La rutina pudo editarse después de empezar: el borrador guardado manda, la rutina solo rellena huecos.
+  const draft = baseDraft(raw.planSessionId, isTs(raw.startedAt) ? raw.startedAt : now);
   if (!draft) return null;
   if (isId(raw.id)) draft.id = raw.id;
   draft.notes = clampText(raw.notes, LIMITS.notes);
@@ -509,7 +516,7 @@ export function restoreDraft(raw, now = Date.now()) {
       .filter(e => e && !seen.has(e.id) && seen.add(e.id));
     if (restored.length) draft.exercises = restored;
   }
-  return draft;
+  return draft.exercises.length ? draft : null;
 }
 
 function fieldsAt(draft, exIdx) {
@@ -623,7 +630,7 @@ export function slugId(name) {
   return slug ? `x-${slug}` : `x-${newId().slice(0, 12)}`;
 }
 
-// Sustituye un ejercicio por otro del plan (si el nombre coincide) o por uno libre.
+// Sustituye un ejercicio por otro de la biblioteca (si el nombre coincide, aunque esté archivado) o por uno libre.
 // Conserva el número de series y su descanso; los valores se vacían.
 // { ok: true, id } | { ok: false, error: 'invalid' | 'name' | 'duplicate' }
 export function substituteExercise(draft, exIdx, rawName) {
@@ -631,11 +638,7 @@ export function substituteExercise(draft, exIdx, rawName) {
   if (!ex) return { ok: false, error: 'invalid' };
   const name = String(rawName ?? '').trim();
   if (!name || name.length > LIMITS.name) return { ok: false, error: 'name' };
-  let planEx = null;
-  for (const p of PLAN) {
-    planEx = p.exercises.find(e => e.name.toLowerCase() === name.toLowerCase());
-    if (planEx) break;
-  }
+  const planEx = findLibraryExerciseByName(name);
   const id = planEx ? planEx.id : slugId(name);
   if (id === ex.id) return { ok: true, id, same: true };
   if (draft.exercises.some(e => e.id === id)) return { ok: false, error: 'duplicate' };
