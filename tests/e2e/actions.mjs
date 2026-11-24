@@ -107,12 +107,13 @@ try {
   assert.equal(await page.evaluate(() => window.__pwned), undefined, 'se ejecutó código inyectado');
 
   // 3. Volver a home e iniciar sesión: los inputs empiezan vacíos (el anterior va en placeholder).
-  await page.locator('#screen-history [data-action="go-screen"][data-screen="home"]').click();
+  await page.locator('#screen-history [data-action="go-back"]').click();
   await page.waitForSelector('#screen-home.active .session-btn');
   await page.locator('.session-btn').first().click();
   await page.waitForSelector('#screen-session.active .kg-input');
   assert.equal(await page.locator('#session-header-title').textContent(), 'Sesión 1: Pecho + Hombro');
   assert.equal(await page.locator('#screen-session .kg-input').first().inputValue(), '');
+  assert.equal(await page.locator('#screen-session .prev-btn').count(), 0, 'sin historial no hay columna Anterior con valores');
 
   // 4. Enter salta al siguiente input (kg → reps de la misma serie → kg de la siguiente).
   const inputs = page.locator('#screen-session .kg-input');
@@ -122,42 +123,55 @@ try {
   await page.keyboard.press('Enter');
   assert.deepEqual(await page.evaluate(() => [document.activeElement.dataset.series, document.activeElement.dataset.field]), ['1', 'weight']);
 
-  // 5. Timer: iniciar, pausar, reanudar, cancelar.
-  const firstTimerBtn = page.locator('#screen-session [data-action="start-timer"]').first();
-  const label = await firstTimerBtn.textContent();
-  assert.equal(label, '⏱ 1m30s');
-  await firstTimerBtn.click();
-  const timer = page.locator('#screen-session .mini-timer').first();
-  await timer.waitFor();
+  // 5. Descanso: marcar una serie arranca la barra fija; pausar, reanudar y saltar.
+  // El estado se guarda en eventos, no en cada tick.
+  await page.locator('#screen-session .exercise-block').first().locator('.kg-input').first().fill('30');
+  await page.locator('#screen-session .exercise-block').first().locator('.kg-input').first().dispatchEvent('change');
+  await page.evaluate(() => {
+    window.__uiWrites = 0;
+    const orig = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      if (k === 'gymtracker.ui') window.__uiWrites += 1;
+      return orig.call(this, k, v);
+    };
+  });
+  await page.locator('#screen-session .check-btn').first().click();
+  const bar = page.locator('#rest-bar');
+  await bar.waitFor({ state: 'visible' });
+  assert.equal(await page.locator('#screen-session .timer-btn').count(), 0, 'ya no hay temporizadores por serie');
+  assert.equal(await page.evaluate(() => window.__uiWrites), 1, 'un guardado al arrancar el descanso');
   await page.waitForTimeout(1300);
-  const t1 = await timer.locator('.timer-text').textContent();
-  assert.match(t1, /^1:2\d$/, `timer corriendo: ${t1}`);
+  const t1 = await bar.locator('#rest-time').textContent();
+  assert.match(t1, /^1:2\d$/, `descanso corriendo: ${t1}`);
+  assert.equal(await page.evaluate(() => window.__uiWrites), 1, 'los ticks no escriben en localStorage');
   st = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.ui')));
-  assert.equal(st.timers['0-0'].duration, 90);
+  assert.equal(st.timer.duration, 90);
 
-  await timer.locator('[data-action="toggle-timer"]').click();
-  assert.equal(await timer.locator('[data-action="toggle-timer"]').textContent(), '▶');
-  const paused = await timer.locator('.timer-text').textContent();
+  await bar.locator('#rest-toggle').click();
+  assert.equal(await bar.locator('#rest-toggle').textContent(), '▶');
+  const paused = await bar.locator('#rest-time').textContent();
   await page.waitForTimeout(1300);
-  assert.equal(await timer.locator('.timer-text').textContent(), paused, 'pausado no avanza');
-  await timer.locator('[data-action="toggle-timer"]').click();
-  assert.equal(await timer.locator('[data-action="toggle-timer"]').textContent(), '⏸');
+  assert.equal(await bar.locator('#rest-time').textContent(), paused, 'pausado no avanza');
+  await bar.locator('#rest-toggle').click();
+  assert.equal(await bar.locator('#rest-toggle').textContent(), '⏸');
 
-  await timer.locator('[data-action="clear-timer"]').click();
-  assert.equal(await page.locator('#screen-session .mini-timer').count(), 0);
-  assert.equal(await page.locator('#screen-session [data-action="start-timer"]').first().textContent(), label);
+  await bar.locator('[data-action="rest-skip"]').click();
+  assert.equal(await bar.isHidden(), true);
+  st = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.ui')));
+  assert.equal(st.timer, null);
 
-  // 6. Timer corto (myo-reps, 15 s) llega a 0 y vuelve a botón. Se adelanta el reloj con runFor.
-  const myo = page.locator('#screen-session .exercise-block').nth(2).locator('[data-action="start-timer"]').first();
-  assert.equal(await myo.textContent(), '⏱ 15s');
-  await myo.click();
+  // 6. Descanso corto (myo-reps, 15 s) llega a 0 y la barra desaparece. Se adelanta el reloj con runFor.
+  const myo = page.locator('#screen-session .exercise-block').nth(2);
+  await myo.locator('.kg-input').first().fill('12');
+  await myo.locator('.kg-input').first().dispatchEvent('change');
+  await myo.locator('.check-btn').first().click();
+  await bar.waitFor({ state: 'visible' });
   await page.clock.runFor(16_000);
-  assert.equal(await page.locator('#screen-session .exercise-block').nth(2).locator('.mini-timer').count(), 0);
-  assert.equal(await page.locator('#screen-session .exercise-block').nth(2).locator('[data-action="start-timer"]').first().textContent(), '⏱ 15s');
+  assert.equal(await bar.isHidden(), true, 'la barra se oculta al terminar');
 
   // 7. Superserie (sesión 2) con dos inputs y etiquetas; guardar y copiar resumen.
   // Cambiar de sesión con un borrador abierto pide confirmación (el handler la acepta).
-  await page.locator('#screen-session [data-action="go-screen"][data-screen="home"]').click();
+  await page.locator('#screen-session [data-action="go-back"]').click();
   await page.locator('.session-btn').nth(1).click();
   await page.waitForSelector('#screen-session.active .input-superset');
   assert.match(dialogs.at(-1), /sesión en curso \(Sesión 1: Pecho \+ Hombro\)/);

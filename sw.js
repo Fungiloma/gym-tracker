@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gym-tracker-v4';
+const CACHE_NAME = 'gym-tracker-v5';
 const ASSETS_TO_CACHE = [
   '/gym-tracker/manifest.json',
   '/gym-tracker/icons/icon-192.png',
@@ -84,6 +84,19 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => caches.match(event.request));
+    })
+  );
+});
+
+// Al tocar la notificación de fin de descanso, volver a la app abierta o abrirla.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) return client.focus();
+      }
+      return self.clients.openWindow('./');
     })
   );
 });

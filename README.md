@@ -43,13 +43,14 @@ Tu plan de entrenamiento personalizado, instalable como app nativa en iOS y Andr
 1. En la pantalla principal, selecciona una sesión (Pecho + Hombro, Pierna, etc.)
 2. Aparecerán todos los ejercicios del plan
 3. Rellena los pesos (kg) en los inputs
-4. Los pesos de la última sesión del mismo tipo se cargarán automáticamente
+4. La columna **Anterior** muestra la última sesión del mismo tipo; tócala para usar esos valores
+5. Toca **✓** al terminar una serie: si estaba vacía, copia la serie de encima
 
-### Timers
+### Descanso
 
-- Cada serie con descanso mostrará un botón **⏱**
-- Tap para iniciar el timer → sonará cuando acabe
-- Puedes pausar/reanudar o cerrar el timer manualmente
+- Marcar una serie arranca un único descanso, fijo en la parte inferior, con **±15 s**, pausa y saltar
+- El descanso de cada ejercicio se ajusta con **−/+** bajo sus series
+- Al terminar: vibración, sonido y, con la app en segundo plano, notificación si Android lo permite
 
 ### Guardar sesión
 

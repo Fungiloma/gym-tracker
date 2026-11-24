@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAN, getPlanSession, restFor, fieldsFor, findPlanExercise } from '../js/plan.js';
+import { PLAN, getPlanSession, fieldsFor, findPlanExercise } from '../js/plan.js';
 import {
   KEYS, V1_KEYS, LEGACY_KEYS, loadData, saveData, loadDraft, saveDraft, clearDraft, loadUi, saveUi,
 } from '../js/storage.js';
 import {
-  formatRest, formatRemaining, ringOffset, remainingAt, createTimer, toggleTimer, isTimerKey, sanitizeTimers, RING_CIRCUMFERENCE,
+  formatRest, formatRemaining, ringOffset, remainingAt, createTimer, toggleTimer, adjustTimer, sanitizeTimer, formatElapsed, RING_CIRCUMFERENCE,
 } from '../js/timers.js';
 import { createDraft, setDraftValue } from '../js/data.js';
 
@@ -96,39 +96,20 @@ test('borrador: guardar, recargar, ignorar basura y borrar', () => {
   const back = loadDraft(st);
   assert.equal(back.id, d.id);
   assert.equal(back.exercises[0].series[0].weight, 22.5);
-  assert.equal(back.exercises[0].series[0].done, true);
+  assert.equal(back.exercises[0].series[0].done, false, 'escribir no marca la serie como hecha');
   clearDraft(st);
   assert.equal(loadDraft(st), null);
   assert.equal(loadDraft(memoryStorage({ [KEYS.draft]: '{bad' })), null);
   assert.equal(loadDraft(memoryStorage({ [KEYS.draft]: '{"planSessionId":"nope"}' })), null);
 });
 
-test('estado de UI separado: solo ids de texto y timers como objeto', () => {
-  const defaults = { timers: {}, expandedSessions: [] };
+test('estado de UI separado: ids de texto, descanso y descansos por ejercicio validados', () => {
+  const defaults = { timer: null, restByExercise: {}, expandedSessions: [] };
   assert.deepEqual(loadUi(defaults, memoryStorage()), defaults);
   assert.deepEqual(loadUi(defaults, memoryStorage({ [KEYS.ui]: '[1]' })), defaults);
   const st = memoryStorage();
   saveUi({ timers: {}, expandedSessions: ['a', 1, null] }, st);
   assert.deepEqual(loadUi(defaults, st).expandedSessions, ['a']);
-});
-
-test('sanitizeTimers descarta claves y números inválidos', () => {
-  const ok = { duration: 90, endTs: 1000, paused: false, remaining: 90 };
-  assert.deepEqual(sanitizeTimers({ '0-0': ok, 'x': ok, '1-1': { duration: 'a' }, '2-2': null }), { '0-0': ok });
-  assert.deepEqual(sanitizeTimers(null), {});
-});
-
-test('restFor devuelve el descanso del plan y null en claves inválidas', () => {
-  assert.equal(restFor(P1.id, '0-0'), P1.exercises[0].series[0].rest);
-  assert.equal(restFor(P1.id, '2-3'), null); // myo-reps última serie: rest 0
-  assert.equal(restFor(P1.id, '99-0'), null);
-  assert.equal(restFor(P1.id, "0-0');alert(1)//"), null);
-  assert.equal(restFor('no existe', '0-0'), null);
-});
-
-test('isTimerKey solo acepta "n-n"', () => {
-  assert.ok(isTimerKey('3-12'));
-  for (const k of ['', '3', '3-', 'a-1', '1-1-1', '1-1"]', undefined]) assert.ok(!isTimerKey(k), String(k));
 });
 
 test('formatRest y formatRemaining', () => {
@@ -150,7 +131,7 @@ test('ringOffset va de 0 (lleno) a la circunferencia (vacío)', () => {
 
 test('createTimer, remainingAt y toggleTimer (pausa y reanudación)', () => {
   const t = createTimer(90, 1_000);
-  assert.deepEqual(t, { duration: 90, endTs: 91_000, paused: false, remaining: 90 });
+  assert.deepEqual(t, { duration: 90, endTs: 91_000, paused: false, remaining: 90, label: '' });
   assert.equal(remainingAt(t, 31_000), 60);
   assert.equal(remainingAt(t, 200_000), 0);
 
@@ -161,4 +142,53 @@ test('createTimer, remainingAt y toggleTimer (pausa y reanudación)', () => {
   toggleTimer(t, 500_000);
   assert.equal(t.paused, false);
   assert.equal(t.endTs, 560_000);
+});
+
+test('sanitizeTimer descarta formas inválidas y conserva el descanso válido', () => {
+  const ok = { duration: 90, endTs: 1000, paused: false, remaining: 90, label: 'Press · serie 1' };
+  assert.deepEqual(sanitizeTimer(ok), ok);
+  assert.equal(sanitizeTimer(null), null);
+  assert.equal(sanitizeTimer({ ...ok, duration: 'a' }), null);
+  assert.equal(sanitizeTimer({ ...ok, duration: 0 }), null);
+  assert.equal(sanitizeTimer({ ...ok, remaining: -1 }), null);
+  assert.equal(sanitizeTimer({ ...ok, duration: 99999 }), null);
+  assert.equal(sanitizeTimer({ ...ok, label: 5 }).label, '');
+});
+
+test('adjustTimer suma y resta 15 s, también en pausa, y termina en 0', () => {
+  const t = createTimer(60, 0, 'x');
+  assert.equal(adjustTimer(t, 15, 10_000), 65);
+  assert.equal(t.endTs, 75_000);
+  assert.equal(t.duration, 65, 'la duración crece si lo restante la supera');
+  assert.equal(adjustTimer(t, -15, 10_000), 50);
+  assert.equal(t.endTs, 60_000);
+  toggleTimer(t, 10_000);
+  assert.equal(adjustTimer(t, 15, 20_000), 65);
+  assert.equal(t.remaining, 65);
+  assert.equal(t.paused, true);
+  assert.equal(adjustTimer(t, -500, 20_000), 0);
+});
+
+test('formatElapsed: m:ss y h:mm:ss', () => {
+  assert.equal(formatElapsed(0), '0:00');
+  assert.equal(formatElapsed(59_999), '0:59');
+  assert.equal(formatElapsed(61_000), '1:01');
+  assert.equal(formatElapsed(3_599_000), '59:59');
+  assert.equal(formatElapsed(3_661_000), '1:01:01');
+  assert.equal(formatElapsed(-5), '0:00');
+});
+
+test('loadUi: descanso activo y descansos por ejercicio saneados', () => {
+  const defaults = { timer: null, restByExercise: {}, expandedSessions: [], notifAsked: false };
+  const raw = JSON.stringify({
+    timer: { duration: 90, endTs: 5, paused: true, remaining: 40, label: 'a' },
+    restByExercise: { 'press-banca': 120, 'mal id!': 30, peso: -5, otro: 1.5, cero: 0 },
+    notifAsked: true,
+  });
+  const ui = loadUi(defaults, memoryStorage({ [KEYS.ui]: raw }));
+  assert.equal(ui.timer.remaining, 40);
+  assert.deepEqual(ui.restByExercise, { 'press-banca': 120, cero: 0 });
+  assert.equal(ui.notifAsked, true);
+  assert.deepEqual(defaults.restByExercise, {}, 'los valores por defecto no se mutan');
+  assert.equal(loadUi(defaults, memoryStorage({ [KEYS.ui]: '{"timer":{"duration":"x"}}' })).timer, null);
 });
