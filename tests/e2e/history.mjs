@@ -76,7 +76,7 @@ try {
   await page.waitForSelector('#screen-history.active');
 
   // 1. Pestañas y lista de sesiones con volumen; búsqueda y filtro.
-  assert.deepEqual(await page.locator('#history-tabs .tab-btn').allTextContents(), ['Sesiones', 'Ejercicios', 'Gráficas', 'Calendario', 'Cuerpo']);
+  assert.deepEqual(await page.locator('#history-tabs .tab-btn').allTextContents(), ['Sesiones', 'Ejercicios', 'Gráficas', 'Músculos', 'Calendario', 'Cuerpo']);
   assert.equal(await tab('sessions').getAttribute('aria-selected'), 'true');
   assert.equal(await view.locator('.session-card').count(), 4);
   assert.match(await view.locator('.session-card').first().textContent(), /1365 kg de volumen/, 'el calentamiento no suma');

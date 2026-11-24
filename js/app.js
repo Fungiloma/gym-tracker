@@ -6,14 +6,19 @@ import {
   buildExport, parseImport, mergeSessions, mergeBody, toCSV, hasValues, parseBodyInput, upsertBody, isDateKey,
   toggleSeriesDone, fillSeries, addSeries, removeLastSeries, insertSeries, moveExercise,
   substituteExercise, setNote, defaultRest, restForSeries, MAX_REST,
+  getSettings, applySetting, fieldsForExerciseId,
 } from './data.js';
+import { setUnit, getUnit, unitLabel, inputToKg, kgToDisplay, progressionStepKg } from './units.js';
+import { suggestOverload, deloadNotices } from './progress.js';
+import { renderSettings, renderPlates, renderPlateResult, readPlatesForm, defaultBarKg, defaultPlatesKg } from './tools.js';
+import { buildShareCard, renderShareCard, canvasToBlob } from './share.js';
 import {
   createTimer, toggleTimer as toggleTimerState, adjustTimer, remainingAt, formatElapsed,
   beep, vibrate, unlockAudio,
 } from './timers.js';
 import {
   h, renderHome, renderSession, renderSeriesRow, renderImportPreview, formatDate,
-  renderRestBar, updateRestBar,
+  renderRestBar, updateRestBar, renderNotices,
 } from './views.js';
 import { renderHistoryView, TABS } from './history.js';
 import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, dayKey } from './stats.js';
@@ -23,7 +28,7 @@ import { PLAN } from './plan.js';
 // data: datos persistentes (gymtracker.data). draft: sesión en curso (gymtracker.draft).
 // ui: estado de interfaz (gymtracker.ui). Cada uno se guarda por separado.
 // ui.timer: el único descanso activo (se guarda solo en eventos, no en cada tick).
-const DEFAULT_UI = { timer: null, restByExercise: {}, expandedSessions: [], notifAsked: false };
+const DEFAULT_UI = { timer: null, restByExercise: {}, expandedSessions: [], notifAsked: false, guided: false, guidedIndex: 0 };
 const REST_STEP = 15;
 const REST_STEP_MAX = 600;
 
@@ -33,12 +38,60 @@ let ui = { ...DEFAULT_UI };
 let pendingImport = null;
 let substituting = null;
 let summaryShown = false;
+let lastSummary = null;
+let platesPrefill = null;
+let sharePreviewUrl = null;
 let currentScreen = 'home';
 // Estado de la pantalla de historial (no se guarda): pestaña, filtros y navegación de calendario/semana.
 const view = { tab: 'sessions', search: '', plan: '', exerciseId: null, calYear: 0, calMonth: 0, weekOffset: 0 };
 
 const $ = id => document.getElementById(id);
 const container = () => $('exercises-container');
+
+// ==================== AJUSTES ====================
+const settings = () => getSettings(data);
+
+// Tema y unidad activos según los ajustes. 'auto' sigue al sistema (ver css).
+function applyAppearance() {
+  const s = settings();
+  setUnit(s.units);
+  document.documentElement.dataset.theme = s.theme;
+  const label = $('body-weight-label');
+  if (label) label.textContent = `Peso (${unitLabel()})`;
+}
+
+function changeSetting(key, value) {
+  const r = applySetting(data.settings, key, value);
+  if (!r.ok) return false;
+  const before = data.settings;
+  data.settings = r.settings;
+  if (key === 'units') {
+    // La barra y los discos se guardan en kg pero se piensan en la unidad elegida: vuelven a los de esa unidad.
+    delete data.settings.bar;
+    delete data.settings.plates;
+  }
+  if (!saveData()) {
+    data.settings = before;
+    return false;
+  }
+  applyAppearance();
+  repaintAll();
+  return true;
+}
+
+// Repinta lo que depende de unidades y ajustes.
+function repaintAll() {
+  if (currentScreen === 'settings') renderSettings($('settings-container'), settings());
+  if (currentScreen === 'plates') showPlates();
+  if (draft) renderSessionView();
+  if (currentScreen === 'home') renderHome($('sessions-list'), draft);
+  if (currentScreen === 'history') renderHistoryScreen();
+  renderHomeNotices();
+}
+
+function renderHomeNotices() {
+  renderNotices($('home-notices'), settings().progression ? deloadNotices(data.sessions) : []);
+}
 
 // ==================== AVISOS ====================
 let toastTimeout = null;
@@ -92,8 +145,13 @@ function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   target.classList.add('active');
   currentScreen = name;
-  if (name === 'home') renderHome($('sessions-list'), draft);
+  if (name === 'home') {
+    renderHome($('sessions-list'), draft);
+    renderHomeNotices();
+  }
   else if (name === 'history') openHistory();
+  else if (name === 'settings') renderSettings($('settings-container'), settings());
+  else if (name === 'plates') showPlates();
   else if (name === 'session') {
     tick();
     ensureLoop();
@@ -145,6 +203,7 @@ function startSession(planId) {
     if (!confirm(`Tienes una sesión en curso (${current ? current.name : 'sin nombre'}). ¿Descartarla y empezar ${plan.name}?`)) return;
   }
   draft = createDraft(planId);
+  ui.guidedIndex = 0;
   ui.timer = null;
   substituting = null;
   saveUi();
@@ -159,7 +218,16 @@ function resumeSession() {
 }
 
 function restOf(ex) {
-  return Object.hasOwn(ui.restByExercise, ex.id) ? ui.restByExercise[ex.id] : defaultRest(ex);
+  if (Object.hasOwn(ui.restByExercise, ex.id)) return ui.restByExercise[ex.id];
+  return defaultRest(ex) || settings().defaultRest;
+}
+
+function suggestFor(ex) {
+  return settings().progression ? suggestOverload(data.sessions, ex.id, progressionStepKg()) : null;
+}
+
+function guidedIndex() {
+  return draft ? Math.min(Math.max(ui.guidedIndex, 0), draft.exercises.length - 1) : 0;
 }
 
 function showSession() {
@@ -178,6 +246,8 @@ function renderSessionView() {
     previous: previousFor(data.sessions, draft.planSessionId),
     restOf,
     substituting,
+    suggest: suggestFor,
+    guided: ui.guided ? guidedIndex() : null,
   });
   el.scrollTop = top;
   const { filled, total } = draftStats(draft);
@@ -229,6 +299,8 @@ function completeSession() {
   endDraft();
   storage.requestPersistence();
 
+  lastSummary = { session: r.session, records };
+  clearSharePreview();
   $('summary-session-name').textContent = r.session.name;
   $('summary-text').textContent = buildSummaryText(r.session, formatDate(r.session.startedAt));
   renderRecords(records);
@@ -273,7 +345,7 @@ function toggleSeries(exIdx, seriesIdx) {
   refreshRow(exIdx, seriesIdx);
   if (r.done) {
     const ex = draft.exercises[exIdx];
-    const sec = restForSeries(draft, exIdx, seriesIdx, ui.restByExercise);
+    const sec = restForSeries(draft, exIdx, seriesIdx, ui.restByExercise, settings().defaultRest);
     if (sec) startRest(sec, `${ex.name} · serie ${seriesIdx + 1}`);
   }
 }
@@ -320,7 +392,13 @@ function removeSeriesFrom(exIdx) {
 }
 
 function moveExerciseBy(exIdx, dir) {
-  if (!draft || exIdx === null || moveExercise(draft, exIdx, dir) < 0) return;
+  if (!draft || exIdx === null) return;
+  const to = moveExercise(draft, exIdx, dir);
+  if (to < 0) return;
+  if (ui.guided) {
+    ui.guidedIndex = to;
+    saveUi();
+  }
   substituting = null;
   saveDraft();
   renderSessionView();
@@ -397,8 +475,9 @@ function finishRest(late) {
   const label = ui.timer ? ui.timer.label : '';
   clearRest();
   if (late) return;
-  vibrate();
-  beep();
+  const s = settings();
+  if (s.vibration) vibrate();
+  if (s.sound) beep();
   if (document.hidden) notifyRestEnd(label);
 }
 
@@ -458,7 +537,7 @@ function notifyRestEnd(label) {
     if (!('Notification' in window) || Notification.permission !== 'granted' || !navigator.serviceWorker) return;
     navigator.serviceWorker.ready
       .then(reg => reg.showNotification('Descanso terminado', {
-        body: label || 'Vuelve a la barra', tag: 'rest-end', icon: 'icons/icon-192.png', vibrate: [200, 100, 200],
+        body: label || 'Vuelve a la barra', tag: 'rest-end', icon: 'icons/icon-192.png', ...(settings().vibration ? { vibrate: [200, 100, 200] } : {}), ...(!settings().sound && !settings().vibration ? { silent: true } : {}),
       }))
       .catch(() => {});
   } catch {}
@@ -604,6 +683,7 @@ function saveBody() {
   const err = $('body-error');
   const raws = {};
   document.querySelectorAll('#body-form [data-key]').forEach(i => { raws[i.dataset.key] = i.value; });
+  if (raws.weight !== undefined) raws.weight = inputToKg(raws.weight);
   const fail = msg => {
     err.textContent = msg;
     err.hidden = false;
@@ -688,6 +768,158 @@ function toggleExpandSession(id) {
   else ui.expandedSessions.push(id);
   saveUi();
   renderHistoryScreen();
+}
+
+// ==================== PROGRESIÓN Y MODO GUIADO ====================
+function toggleGuided() {
+  if (!draft) return;
+  ui.guided = !ui.guided;
+  saveUi();
+  renderSessionView();
+  container().scrollTop = 0;
+}
+
+function guidedStep(delta) {
+  if (!draft || !ui.guided || !Number.isInteger(delta)) return;
+  const next = Math.min(Math.max(guidedIndex() + delta, 0), draft.exercises.length - 1);
+  if (next === guidedIndex()) return;
+  ui.guidedIndex = next;
+  substituting = null;
+  saveUi();
+  renderSessionView();
+  container().scrollTop = 0;
+}
+
+// Pone la carga sugerida en las series del ejercicio que aún no tienen peso.
+function applySuggestion(exIdx) {
+  const ex = draft && exIdx !== null && draft.exercises[exIdx];
+  const sug = ex && suggestFor(ex);
+  if (!sug || sug.status !== 'increase') return;
+  let n = 0;
+  ex.series.forEach((x, i) => {
+    if (x.weight === null && setDraftValue(draft, exIdx, i, 'weight', sug.next).ok) n += 1;
+  });
+  if (!n) {
+    toast('Todas las series ya tienen peso.');
+    return;
+  }
+  saveDraft();
+  renderSessionView();
+}
+
+// ==================== AJUSTES Y DISCOS (acciones) ====================
+function setSettingAction(el) {
+  changeSetting(el.dataset.key, el.dataset.value);
+}
+
+function toggleSettingAction(el) {
+  const key = el.dataset.key;
+  changeSetting(key, !settings()[key]);
+}
+
+function stepSettingAction(el) {
+  const key = el.dataset.key;
+  const delta = Number(el.dataset.delta);
+  if (key !== 'defaultRest' || !Number.isInteger(delta)) return;
+  changeSetting(key, Math.min(REST_STEP_MAX, Math.max(0, settings().defaultRest + delta)));
+}
+
+function showPlates() {
+  const s = data.settings;
+  renderPlates($('plates-container'), {
+    totalKg: platesPrefill,
+    barKg: s.bar ?? defaultBarKg(),
+    platesKg: s.plates ?? defaultPlatesKg(),
+  });
+  updatePlates();
+}
+
+function updatePlates() {
+  return renderPlateResult($('plates-result'), readPlatesForm());
+}
+
+function openPlates(exIdx) {
+  const ex = draft && exIdx !== null ? draft.exercises[exIdx] : null;
+  platesPrefill = null;
+  if (ex) {
+    const sug = suggestFor(ex);
+    const weights = ex.series.map(x => x.weight).filter(w => typeof w === 'number' && w > 0);
+    platesPrefill = weights.length ? Math.max(...weights) : (sug ? sug.next : null);
+  }
+  goScreen('plates');
+}
+
+function savePlates() {
+  const form = readPlatesForm();
+  renderPlateResult($('plates-result'), form);
+  if (form.error) return;
+  const before = data.settings;
+  const a = applySetting(before, 'bar', form.barKg);
+  const b = a.ok && applySetting(a.settings, 'plates', form.platesKg);
+  if (!a.ok || !b.ok) return;
+  data.settings = b.settings;
+  if (!saveData()) {
+    data.settings = before;
+    return;
+  }
+  toast('Barra y discos guardados');
+}
+
+function resetPlates() {
+  const a = applySetting(data.settings, 'bar', null);
+  const b = applySetting(a.settings, 'plates', null);
+  const before = data.settings;
+  data.settings = b.settings;
+  if (!saveData()) {
+    data.settings = before;
+    return;
+  }
+  showPlates();
+}
+
+// ==================== IMAGEN PARA COMPARTIR ====================
+function clearSharePreview() {
+  if (sharePreviewUrl) URL.revokeObjectURL(sharePreviewUrl);
+  sharePreviewUrl = null;
+  const box = $('share-preview');
+  box.replaceChildren();
+  box.hidden = true;
+}
+
+async function shareCard() {
+  if (!lastSummary) return;
+  const { session, records } = lastSummary;
+  const btn = $('share-card-btn');
+  btn.disabled = true;
+  try {
+    const model = buildShareCard(session, records, formatDate(session.startedAt));
+    const blob = await canvasToBlob(renderShareCard(model));
+    const file = new File([blob], `gym-tracker-${dayKey(session.startedAt)}.png`, { type: 'image/png' });
+    clearSharePreview();
+    sharePreviewUrl = URL.createObjectURL(blob);
+    const box = $('share-preview');
+    box.replaceChildren(h('img', { src: sharePreviewUrl, alt: `Resumen de ${session.name}`, class: 'share-img' }));
+    box.hidden = false;
+    const canShare = !!(navigator.canShare && navigator.share && navigator.canShare({ files: [file] }));
+    if (canShare) {
+      try {
+        await navigator.share({ files: [file], title: session.name });
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+        toast('No se pudo compartir; se descarga la imagen.', 'error');
+      }
+    }
+    const a = h('a', { href: sharePreviewUrl, download: file.name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    console.warn('Error generating share card', e);
+    toast('No se pudo generar la imagen.', 'error');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ==================== EXPORT / IMPORT ====================
@@ -797,6 +1029,16 @@ const ACTIONS = {
   'rest-toggle': () => toggleRest(),
   'rest-skip': () => clearRest(),
   'toast-undo': () => runToastUndo(),
+  'toggle-guided': () => toggleGuided(),
+  'guided-step': el => guidedStep(Number(el.dataset.delta)),
+  'apply-suggestion': el => applySuggestion(idx(el.dataset.ex)),
+  'set-setting': el => setSettingAction(el),
+  'toggle-setting': el => toggleSettingAction(el),
+  'step-setting': el => stepSettingAction(el),
+  'open-plates': el => openPlates(idx(el.dataset.ex)),
+  'save-plates': () => savePlates(),
+  'reset-plates': () => resetPlates(),
+  'share-card': () => shareCard(),
   'toggle-expand': el => toggleExpandSession(el.dataset.id),
   'delete-session': el => deleteSession(el.dataset.id),
   'history-tab': el => setHistoryTab(el.dataset.tab),
@@ -824,6 +1066,9 @@ function initEvents() {
   window.addEventListener('popstate', onPopState);
 
   $('import-file').addEventListener('change', e => readImportFile(e.target));
+  $('plates-container').addEventListener('input', e => {
+    if (e.target.classList.contains('plates-input')) updatePlates();
+  });
   $('history-search').addEventListener('input', e => {
     view.search = e.target.value;
     renderHistoryScreen();
@@ -841,7 +1086,9 @@ function initEvents() {
     if (!input.classList.contains('kg-input') || !draft) return;
     const exIdx = parseInt(input.dataset.ex, 10);
     const seriesIdx = parseInt(input.dataset.series, 10);
-    const r = setDraftValue(draft, exIdx, seriesIdx, input.dataset.field, input.value);
+    const field = fieldsForExerciseId(draft.exercises[exIdx] ? draft.exercises[exIdx].id : '').find(f => f.key === input.dataset.field);
+    const raw = field && field.unit === 'kg' ? inputToKg(input.value) : input.value;
+    const r = setDraftValue(draft, exIdx, seriesIdx, input.dataset.field, raw);
     if (!r.ok) {
       input.setAttribute('aria-invalid', 'true');
       toast('Valor no válido', 'error');
@@ -849,7 +1096,7 @@ function initEvents() {
     }
     input.removeAttribute('aria-invalid');
     const s = draft.exercises[exIdx].series[seriesIdx];
-    input.value = r.value === null ? '' : String(r.value);
+    input.value = r.value === null ? '' : String(field && field.unit === 'kg' ? kgToDisplay(r.value) : r.value);
     const row = input.closest('.series-block');
     if (row) {
       row.classList.toggle('done', s.done);
@@ -908,6 +1155,7 @@ function init() {
   }
   if (loaded.source === 'v1') saveData();
 
+  applyAppearance();
   draft = storage.loadDraft();
   ui = storage.loadUi(DEFAULT_UI);
   // Un descanso solo tiene sentido con sesión en curso; si ya terminó mientras la app estaba cerrada, se descarta.

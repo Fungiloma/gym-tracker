@@ -136,6 +136,8 @@ export function loadUi(defaults, storage = defaultStorage()) {
       }
     }
     if (typeof saved.notifAsked === 'boolean') out.notifAsked = saved.notifAsked;
+    if (typeof saved.guided === 'boolean') out.guided = saved.guided;
+    if (Number.isInteger(saved.guidedIndex) && saved.guidedIndex >= 0 && saved.guidedIndex < 100) out.guidedIndex = saved.guidedIndex;
   } catch (e) {
     console.warn('Error loading ui state:', e);
   }

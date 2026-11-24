@@ -12,6 +12,10 @@
   --warning: #f59e0b;
   --safe-bottom: env(safe-area-inset-bottom, 0);
   --safe-top: env(safe-area-inset-top, 0);
+  --muted-text: #94a3b8;
+  --drop-text: #fca5a5;
+  --toast-error-bg: #2a1115;
+  color-scheme: dark;
 }
 
 * {
@@ -353,7 +357,7 @@ header .header-subtitle {
 }
 
 .series-block.drop .series-reps {
-  color: #fca5a5;
+  color: var(--drop-text);
 }
 
 .input-kg {
@@ -466,7 +470,7 @@ header .header-subtitle {
 }
 
 .modal-content-text {
-  color: #94a3b8;
+  color: var(--muted-text);
   font-size: 11px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -616,7 +620,7 @@ header .header-subtitle {
 .summary-box { background: var(--bg-tertiary); border-radius: 12px; padding: 14px; }
 .summary-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
 .summary-text {
-  color: #94a3b8;
+  color: var(--muted-text);
   font-size: 11px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -730,7 +734,7 @@ header .header-subtitle {
   color: var(--text-primary);
   z-index: 100;
 }
-.toast.error { border-color: var(--danger); background: #2a1115; }
+.toast.error { border-color: var(--danger); background: var(--toast-error-bg); }
 
 /* Fase 3: registro rápido en el gimnasio */
 .session-header-main { flex: 1; min-width: 0; }
@@ -945,3 +949,87 @@ header .header-subtitle {
 .records-box { background: var(--bg-tertiary); border: 1px solid var(--warning); border-radius: 12px; padding: 12px; margin-top: 16px; }
 .records-title { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
 .record-line { font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
+
+/* ===== Fase 5: tema claro, ajustes, sugerencias, modo guiado, discos, músculos y tarjeta ===== */
+/* El tema oscuro es el de :root. 'auto' (por defecto) sigue al sistema; 'light' y 'dark' lo fuerzan. */
+:root[data-theme="light"] {
+  --bg-primary: #f3f4f6;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #eef0f4;
+  --text-primary: #111827;
+  --text-secondary: #5b6472;
+  --border: #d4d8df;
+  --accent: #4f46e5;
+  --accent-light: #6d28d9;
+  --danger: #dc2626;
+  --success: #059669;
+  --warning: #b45309;
+  --muted-text: #4b5563;
+  --drop-text: #b91c1c;
+  --toast-error-bg: #fee2e2;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    --bg-primary: #f3f4f6;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #eef0f4;
+    --text-primary: #111827;
+    --text-secondary: #5b6472;
+    --border: #d4d8df;
+    --accent: #4f46e5;
+    --accent-light: #6d28d9;
+    --danger: #dc2626;
+    --success: #059669;
+    --warning: #b45309;
+    --muted-text: #4b5563;
+    --drop-text: #b91c1c;
+    --toast-error-bg: #fee2e2;
+    color-scheme: light;
+  }
+}
+
+.view-toggle { margin-bottom: 10px; }
+.view-toggle .btn { min-height: 44px; }
+.guided-nav { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; margin: 10px 0; }
+.guided-nav .btn { min-height: 44px; }
+.guided-count { font-size: 13px; font-weight: 600; text-align: center; color: var(--text-secondary); }
+
+.suggest { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 10px; background: var(--bg-tertiary); padding: 10px 12px; margin: 8px 0; }
+.suggest-up { border-left-color: var(--success); }
+.suggest-title { font-weight: 700; font-size: 13px; }
+.suggest-why { font-size: 12px; color: var(--text-secondary); margin-top: 4px; line-height: 1.45; }
+.suggest-apply { margin-top: 8px; }
+
+.notice { border: 1px solid var(--warning); border-radius: 12px; background: var(--bg-secondary); padding: 10px 12px; font-size: 13px; line-height: 1.45; margin-bottom: 10px; }
+
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.setting-row:last-of-type { border-bottom: none; }
+.setting-text { min-width: 0; flex: 1; }
+.setting-label { font-size: 14px; font-weight: 600; }
+.setting-hint { font-size: 12px; color: var(--text-secondary); margin-top: 3px; line-height: 1.4; }
+.segmented { display: flex; gap: 4px; flex-shrink: 0; }
+.seg-btn, .switch {
+  min-height: 44px; min-width: 52px; padding: 0 12px; border-radius: 10px; font-size: 13px; font-weight: 700; cursor: pointer;
+  background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-secondary);
+}
+.seg-btn[aria-pressed="true"], .switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.explain p { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin-top: 8px; }
+
+.plates-list { list-style: none; display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.plates-list li { background: var(--bg-tertiary); border-radius: 10px; padding: 10px 12px; font-weight: 700; font-size: 16px; }
+.plates-line { font-size: 13px; color: var(--text-secondary); margin-top: 6px; line-height: 1.45; }
+.plates-line.warn { color: var(--warning); }
+.plates-input { font-size: 16px; }
+
+.muscle-row { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.muscle-row:last-child { border-bottom: none; }
+.muscle-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.muscle-name { font-weight: 600; }
+.muscle-sets { color: var(--text-secondary); }
+.muscle-meter { width: 100%; height: 10px; margin-top: 6px; accent-color: var(--accent); }
+.muscle-row.low .muscle-meter { accent-color: var(--warning); }
+.muscle-warn { font-size: 11px; color: var(--warning); margin-top: 4px; }
+
+.share-preview { margin-top: 12px; }
+.share-img { display: block; width: 100%; max-width: 360px; height: auto; margin: 0 auto; border-radius: 12px; border: 1px solid var(--border); }

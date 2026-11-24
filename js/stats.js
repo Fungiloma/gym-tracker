@@ -4,6 +4,7 @@
 // Los ejercicios cuyos campos no son el par kg + reps (superseries con campos propios) no se analizan:
 // sus kg y reps pertenecen a movimientos distintos y un 1RM o un volumen no tendrían sentido.
 import { fieldsForExerciseId, isDateKey } from './data.js';
+import { kgToDisplay, unitLabel } from './units.js';
 
 export const MAX_REPS_1RM = 30;
 const DAY = 86_400_000;
@@ -178,9 +179,11 @@ export function detectRecords(previous, session) {
 }
 
 export function formatRecord(r) {
-  const unit = r.kind === 'reps' ? ' reps' : ' kg';
-  const prev = r.previous > 0 ? ` (antes ${fmt(r.previous)})` : '';
-  return `${r.name}: ${RECORD_LABEL[r.kind]} ${fmt(r.value)}${unit}${prev}`;
+  const isReps = r.kind === 'reps';
+  const unit = isReps ? ' reps' : ` ${unitLabel()}`;
+  const show = v => fmt(isReps ? v : round1(kgToDisplay(v)));
+  const prev = r.previous > 0 ? ` (antes ${show(r.previous)})` : '';
+  return `${r.name}: ${RECORD_LABEL[r.kind]} ${show(r.value)}${unit}${prev}`;
 }
 
 // Mejores marcas históricas de un ejercicio (para la ficha del ejercicio).
@@ -269,8 +272,9 @@ function fmt(n) {
   return Number.isInteger(n) ? String(n) : String(round1(n)).replace('.', ',');
 }
 
+// Volumen (en kg internos) redondeado, en la unidad activa.
 export function fmtKg(n) {
-  return fmt(Math.round(n));
+  return fmt(Math.round(kgToDisplay(n)));
 }
 
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -295,7 +299,7 @@ export function buildWeeklySummary(sessions, body, weekTs) {
     const prevVol = prevWeek.reduce((n, s) => n + sessionVolume(s), 0);
     lines.push(`Sesiones: ${inWeek.length}`);
     lines.push(`Series válidas: ${inWeek.reduce((n, s) => n + sessionSetCount(s), 0)}`);
-    let volLine = `Volumen: ${fmtKg(vol)} kg`;
+    let volLine = `Volumen: ${fmtKg(vol)} ${unitLabel()}`;
     if (prevVol > 0) {
       const pct = Math.round(((vol - prevVol) / prevVol) * 100);
       volLine += ` (${pct >= 0 ? '+' : ''}${pct}% vs semana anterior)`;
@@ -305,7 +309,7 @@ export function buildWeeklySummary(sessions, body, weekTs) {
     lines.push(volLine);
     lines.push('');
     for (const s of inWeek) {
-      lines.push(`▸ ${shortDate(s.startedAt)} ${s.name}: ${fmtKg(sessionVolume(s))} kg, ${sessionSetCount(s)} series`);
+      lines.push(`▸ ${shortDate(s.startedAt)} ${s.name}: ${fmtKg(sessionVolume(s))} ${unitLabel()}, ${sessionSetCount(s)} series`);
     }
     const records = [];
     for (const s of inWeek) records.push(...detectRecords(sessions, s));
@@ -320,7 +324,7 @@ export function buildWeeklySummary(sessions, body, weekTs) {
   if (weekBody.length) {
     const last = weekBody[weekBody.length - 1];
     lines.push('');
-    lines.push(`Peso corporal: ${fmt(last.weight)} kg (${last.date})`);
+    lines.push(`Peso corporal: ${fmt(round1(kgToDisplay(last.weight)))} ${unitLabel()} (${last.date})`);
   }
   const streak = weekStreaks(sessions, end - 1);
   lines.push('');
