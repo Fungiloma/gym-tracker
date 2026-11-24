@@ -1,6 +1,6 @@
 // Modelo de datos v2 (funciones puras, sin DOM ni almacenamiento).
 //
-// gymtracker.data = { schemaVersion: 2, sessions: Session[], body: BodyEntry[], settings: {} }
+// gymtracker.data = { schemaVersion: 2, sessions: Session[], body: BodyEntry[], settings: Settings }
 // BodyEntry = { date: 'YYYY-MM-DD', weight|null (kg), waist|null, chest|null, arm|null, thigh|null (cm) }
 //             una entrada por fecha, al menos una medida; `body` es opcional en ficheros v2 antiguos.
 // Session  = { id, planSessionId|null, name, startedAt, endedAt|null, notes, exercises: Exercise[] }
@@ -10,6 +10,7 @@
 // Validación estricta para lo que dice ser v2 (se rechaza la sesión entera si algo no
 // cuadra) y lector tolerante para la v1 (se convierte lo que se pueda).
 import { PLAN, getPlanSession, findPlanSessionByName, findPlanExercise, fieldsFor } from './plan.js';
+import { kgToDisplay, unitLabel } from './units.js';
 
 export const SCHEMA_VERSION = 2;
 export const SERIES_TYPES = ['normal', 'warmup', 'drop', 'failure'];
@@ -30,6 +31,63 @@ export const LIMITS = {
   body: 5000,
   importBytes: 5_000_000,
 };
+
+// ==================== AJUSTES ====================
+// settings = claves sueltas, todas opcionales; lo que falta toma el valor de SETTINGS_DEFAULTS.
+//   units 'kg'|'lb'        solo cambia lo que se ve y se escribe; los pesos se guardan siempre en kg
+//   theme 'auto'|'dark'|'light'
+//   sound, vibration, progression  booleanos
+//   defaultRest  segundos (0-3600) para ejercicios sin descanso propio, p. ej. los sustituidos; 0 = sin descanso
+//   bar          peso de la barra en kg (1-100); si falta, 20 kg o 45 lb según la unidad
+//   plates       discos disponibles por lado, en kg, de mayor a menor (1-12); si faltan, los de la unidad
+// Un ajuste inválido se descarta (vuelve a su valor por defecto) sin invalidar el documento.
+export const SETTINGS_DEFAULTS = {
+  units: 'kg', theme: 'auto', sound: true, vibration: true, progression: true, defaultRest: 0,
+};
+export const THEMES = ['auto', 'dark', 'light'];
+export const SETTINGS_LIMITS = { bar: { min: 1, max: 100 }, plate: { min: 0.25, max: 100 }, plates: 12 };
+
+const SETTING_CHECKS = {
+  units: v => v === 'kg' || v === 'lb',
+  theme: v => THEMES.includes(v),
+  sound: v => typeof v === 'boolean',
+  vibration: v => typeof v === 'boolean',
+  progression: v => typeof v === 'boolean',
+  defaultRest: v => Number.isInteger(v) && v >= 0 && v <= 3600,
+  bar: v => typeof v === 'number' && Number.isFinite(v) && v >= SETTINGS_LIMITS.bar.min && v <= SETTINGS_LIMITS.bar.max,
+  plates: v => Array.isArray(v) && v.length >= 1 && v.length <= SETTINGS_LIMITS.plates
+    && v.every(p => typeof p === 'number' && Number.isFinite(p) && p >= SETTINGS_LIMITS.plate.min && p <= SETTINGS_LIMITS.plate.max),
+};
+
+// Devuelve solo las claves conocidas y válidas. Los discos se ordenan de mayor a menor y sin repetir.
+export function validateSettings(raw) {
+  const out = {};
+  if (!isPlainObject(raw)) return out;
+  for (const [key, check] of Object.entries(SETTING_CHECKS)) {
+    if (!Object.hasOwn(raw, key) || !check(raw[key])) continue;
+    out[key] = key === 'plates' ? [...new Set(raw[key])].sort((a, b) => b - a) : raw[key];
+  }
+  return out;
+}
+
+// Ajustes efectivos: los por defecto con lo guardado encima.
+export function getSettings(data) {
+  return { ...SETTINGS_DEFAULTS, ...validateSettings(data && data.settings) };
+}
+
+// Cambia un ajuste. null borra la clave (vuelve al valor por defecto).
+// { ok: true, settings } | { ok: false } sin tocar nada si el valor no es válido.
+export function applySetting(settings, key, value) {
+  if (!Object.hasOwn(SETTING_CHECKS, key)) return { ok: false };
+  const base = validateSettings(settings);
+  if (value === null) {
+    delete base[key];
+    return { ok: true, settings: base };
+  }
+  const next = validateSettings({ ...base, [key]: value });
+  if (!Object.hasOwn(next, key)) return { ok: false };
+  return { ok: true, settings: next };
+}
 
 // Campos para ejercicios que ya no están en el plan (historial importado).
 export const GENERIC_FIELDS = [
@@ -271,8 +329,7 @@ export function validateData(raw) {
   check(raw.body === undefined || Array.isArray(raw.body), 'documento: body no es una lista');
   const { sessions, rejected } = collectSessions(raw.sessions, validateSession);
   const b = collectBody(raw.body || []);
-  // Aún no hay ajustes conocidos (fase 5): se descarta cualquier clave.
-  return { data: { schemaVersion: SCHEMA_VERSION, sessions, body: b.body, settings: {} }, rejected: [...rejected, ...b.rejected] };
+  return { data: { schemaVersion: SCHEMA_VERSION, sessions, body: b.body, settings: validateSettings(raw.settings) }, rejected: [...rejected, ...b.rejected] };
 }
 
 export function tryValidateData(raw) {
@@ -518,12 +575,13 @@ export function defaultRest(ex) {
 
 // Descanso que arranca al hacer una serie: el ajuste del usuario para el ejercicio
 // (0 = sin descanso) o el de la propia serie. null si no hay descanso.
-export function restForSeries(draft, exIdx, seriesIdx, overrides = {}) {
+export function restForSeries(draft, exIdx, seriesIdx, overrides = {}, fallback = 0) {
   const ex = draft && draft.exercises[exIdx];
   const s = ex && ex.series[seriesIdx];
   if (!s) return null;
   const o = overrides && Object.hasOwn(overrides, ex.id) ? overrides[ex.id] : undefined;
-  const sec = Number.isFinite(o) ? o : s.rest;
+  // `fallback` (descanso por defecto del usuario) solo se aplica a ejercicios sin descanso propio en ninguna serie.
+  const sec = Number.isFinite(o) ? o : (s.rest || (defaultRest(ex) === 0 ? fallback : 0));
   return sec > 0 ? Math.min(sec, MAX_REST) : null;
 }
 
@@ -654,14 +712,19 @@ function fmtNum(n) {
   return String(n);
 }
 
+// Pesos de carga: en la unidad activa. Las reps y el RPE no se convierten.
+function fmtField(f, n) {
+  return f.unit === 'kg' ? fmtNum(kgToDisplay(n)) : fmtNum(n);
+}
+
 export function formatSeriesValues(s, fields) {
   const named = fields.some(f => f.label !== f.unit);
   const present = fields.filter(f => s[f.key] !== null && s[f.key] !== undefined);
   if (present.length === 0) return 'sin datos';
   if (named) {
-    return present.map(f => `${f.label} ${fmtNum(s[f.key])}${f.unit === 'kg' ? 'kg' : ' reps'}`).join(' + ');
+    return present.map(f => `${f.label} ${fmtField(f, s[f.key])}${f.unit === 'kg' ? unitLabel() : ' reps'}`).join(' + ');
   }
-  const kg = present.filter(f => f.unit === 'kg').map(f => `${fmtNum(s[f.key])}kg`).join(' + ');
+  const kg = present.filter(f => f.unit === 'kg').map(f => `${fmtField(f, s[f.key])}${unitLabel()}`).join(' + ');
   const reps = present.find(f => f.unit === 'reps');
   if (kg && reps) return `${kg} × ${fmtNum(s[reps.key])}`;
   return kg || `${fmtNum(s[reps.key])} reps`;
@@ -683,7 +746,7 @@ export function formatPrevious(s, fields) {
 // Texto compacto de la serie anterior para la columna "Anterior" ("22.5 × 8").
 export function formatPreviousShort(s, fields) {
   if (!s || !hasValues(s)) return '';
-  return fields.filter(f => s[f.key] !== null && s[f.key] !== undefined).map(f => fmtNum(s[f.key])).join(' × ');
+  return fields.filter(f => s[f.key] !== null && s[f.key] !== undefined).map(f => fmtField(f, s[f.key])).join(' × ');
 }
 
 export function buildSummaryText(session, dateLabel) {

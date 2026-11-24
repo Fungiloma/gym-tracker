@@ -5,6 +5,7 @@ import { PLAN, BADGE, getPlanSession, findPlanExercise } from './plan.js';
 import { draftStats, formatPrevious, formatPreviousShort, formatSeriesLine, fieldsForExerciseId } from './data.js';
 import { sessionVolume, fmtKg } from './stats.js';
 import { formatRest, formatRemaining, ringOffset } from './timers.js';
+import { kgToDisplay, fmtWeightNum, unitLabel } from './units.js';
 
 // Crea un elemento. attrs: class, dataset ({...}) y atributos planos. children: nodos o texto.
 export function h(tag, attrs = {}, ...children) {
@@ -23,6 +24,10 @@ export function h(tag, attrs = {}, ...children) {
 }
 
 // ==================== HOME ====================
+export function renderNotices(container, notices) {
+  container.replaceChildren(...notices.map(n => h('div', { class: 'notice notice-' + n.kind, role: 'note' }, n.text)));
+}
+
 export function renderHome(container, draft) {
   const items = [];
   const current = draft && getPlanSession(draft.planSessionId);
@@ -53,21 +58,64 @@ export function renderHome(container, draft) {
 
 // ==================== SESSION ====================
 // ctx = { previous: Map id → series de la última sesión, restOf(ex) → segundos de descanso mostrados,
-//         substituting: índice del ejercicio con el formulario abierto o null }
+//         substituting: índice del ejercicio con el formulario abierto o null,
+//         suggest(ex) → sugerencia de sobrecarga o null, guided: índice del ejercicio visible o null (modo guiado) }
 export function renderSession(container, draft, ctx) {
   const names = [...new Set(PLAN.flatMap(p => p.exercises.map(e => e.name)))];
+  const guided = Number.isInteger(ctx.guided) ? Math.min(Math.max(ctx.guided, 0), draft.exercises.length - 1) : null;
+  const count = draft.exercises.length;
   container.replaceChildren(...[
-    h('details', { class: 'note-box', open: draft.notes ? 'open' : null },
+    h('div', { class: 'view-toggle' },
+      h('button', { class: 'btn btn-secondary', dataset: { action: 'toggle-guided' }, 'aria-pressed': String(guided !== null) },
+        guided !== null ? '☰ Ver lista completa' : '▶ Un ejercicio por pantalla')),
+    guided !== null ? guidedNav(draft, guided, 'top') : null,
+    guided === null || guided === 0 ? h('details', { class: 'note-box', open: draft.notes ? 'open' : null },
       h('summary', {}, '📝 Notas de la sesión'),
       h('textarea', {
         class: 'note-input', maxlength: '2000', rows: '2', placeholder: 'Cómo te has sentido, molestias…',
         'aria-label': 'Notas de la sesión', dataset: { note: 'session' },
       }, draft.notes),
-    ),
+    ) : null,
     h('div', { class: 'hint' }, 'Toca ✓ en una serie vacía para copiar la anterior; toca la columna "Anterior" para usar la de la última sesión.'),
-    draft.exercises.map((ex, exIdx) => buildExerciseBlock(ex, exIdx, draft.exercises.length, ctx)),
+    guided !== null
+      ? [buildExerciseBlock(draft.exercises[guided], guided, count, ctx), guidedNav(draft, guided, 'bottom')]
+      : draft.exercises.map((ex, exIdx) => buildExerciseBlock(ex, exIdx, count, ctx)),
     h('datalist', { id: 'exercise-options' }, names.map(n => h('option', { value: n }))),
-  ].flat());
+  ].flat().filter(Boolean));
+}
+
+function guidedNav(draft, idx, where) {
+  const ex = draft.exercises[idx];
+  const last = idx === draft.exercises.length - 1;
+  const allDone = ex.series.every(x => x.done);
+  return h('div', { class: 'guided-nav', dataset: { where } },
+    h('button', { class: 'btn btn-secondary', dataset: { action: 'guided-step', delta: '-1' }, disabled: idx === 0 ? 'disabled' : null, 'aria-label': 'Ejercicio anterior' }, '‹ Anterior'),
+    h('div', { class: 'guided-count', 'aria-live': 'polite' }, `Ejercicio ${idx + 1} de ${draft.exercises.length}`),
+    h('button', {
+      class: 'btn ' + (allDone && !last ? 'btn-primary' : 'btn-secondary'), dataset: { action: 'guided-step', delta: '1' },
+      disabled: last ? 'disabled' : null, 'aria-label': 'Ejercicio siguiente',
+    }, 'Siguiente ›'),
+  );
+}
+
+// Sugerencia de sobrecarga progresiva (regla explicada, no asesoramiento). s = resultado de suggestOverload.
+function suggestionBox(s, exIdx) {
+  const reps = s.reps.join(', ');
+  const last = `Última vez (${new Date(s.date).toLocaleDateString('es-ES')}): ${fmtWeightNum(s.weight)} ${unitLabel()} × ${reps} reps.`;
+  if (s.status === 'increase') {
+    return h('div', { class: 'suggest suggest-up', dataset: { suggest: 'increase' } },
+      h('div', { class: 'suggest-title' }, `💡 Sugerencia: prueba ${fmtWeightNum(s.next)} ${unitLabel()}`),
+      h('div', { class: 'suggest-why' }, `${last} Llegaste a ${s.range.max} reps en las ${s.planned} series; con el tope del rango ${s.range.min}-${s.range.max} en todas, se sugiere subir un escalón.`),
+      h('button', { class: 'tool-btn suggest-apply', dataset: { action: 'apply-suggestion', ex: String(exIdx) } }, 'Poner en las series vacías'),
+    );
+  }
+  const missing = s.done < s.planned
+    ? `solo se hicieron ${s.done} de ${s.planned} series`
+    : `no todas las series llegaron a ${s.range.max} reps`;
+  return h('div', { class: 'suggest', dataset: { suggest: 'hold' } },
+    h('div', { class: 'suggest-title' }, `💡 Objetivo: ${s.range.max} reps en las ${s.planned} series con ${fmtWeightNum(s.weight)} ${unitLabel()}`),
+    h('div', { class: 'suggest-why' }, `${last} Aún ${missing}; al conseguirlo se sugiere subir la carga.`),
+  );
 }
 
 function exerciseButton(action, exIdx, label, text, extra = {}) {
@@ -85,6 +133,7 @@ function buildExerciseBlock(ex, exIdx, count, ctx) {
   const prevSeries = ctx.previous.get(ex.id) || [];
   const rest = ctx.restOf(ex);
   const note = ex.substituteFor ? `Sustituye a ${ex.substituteFor}` : (planEx ? planEx.note : '');
+  const suggestion = ctx.suggest ? ctx.suggest(ex) : null;
   return h('div', { class: 'exercise-block', dataset: { ex: String(exIdx) } },
     h('div', { class: 'exercise-header' },
       h('div', { class: 'exercise-header-left' },
@@ -97,11 +146,13 @@ function buildExerciseBlock(ex, exIdx, count, ctx) {
       exerciseButton('move-exercise', exIdx, 'Subir ejercicio', '↑', { disabled: exIdx === 0, data: { dir: '-1' } }),
       exerciseButton('move-exercise', exIdx, 'Bajar ejercicio', '↓', { disabled: exIdx === count - 1, data: { dir: '1' } }),
       exerciseButton('open-substitute', exIdx, 'Sustituir ejercicio', '⇄ Sustituir'),
+      fields.some(f => f.unit === 'kg') ? exerciseButton('open-plates', exIdx, 'Calculadora de discos', '🧮 Discos') : null,
     ),
+    suggestion ? suggestionBox(suggestion, exIdx) : null,
     ctx.substituting === exIdx ? buildSubstituteBox(exIdx) : null,
     h('div', { class: 'series-head', 'aria-hidden': 'true' },
       h('span', {}, 'Anterior'),
-      h('span', {}, fields.map(f => f.label).join(' × ')),
+      h('span', {}, fields.map(f => (f.unit === 'kg' && f.label === 'kg' ? unitLabel() : f.label)).join(' × ')),
       h('span', {}, '✓'),
     ),
     ex.series.map((s, seriesIdx) => buildSeriesRow(ex, exIdx, s, seriesIdx, fields, prevSeries[seriesIdx])),
@@ -139,7 +190,8 @@ function buildSubstituteBox(exIdx) {
 
 function valueInput(className, field, value, exIdx, seriesIdx) {
   const isKg = field.unit === 'kg';
-  const label = field.label === field.unit ? field.unit : `${field.label} (${field.unit})`;
+  const unit = isKg ? unitLabel() : field.unit;
+  const label = field.label === field.unit ? unit : `${field.label} (${unit})`;
   const input = h('input', {
     type: 'text',
     class: className + ' kg-input',
@@ -147,11 +199,11 @@ function valueInput(className, field, value, exIdx, seriesIdx) {
     pattern: isKg ? '[0-9]*[.,]?[0-9]*' : '[0-9]*',
     enterkeyhint: 'next',
     autocomplete: 'off',
-    placeholder: field.unit,
+    placeholder: unit,
     'aria-label': `${label}, serie ${seriesIdx + 1}`,
     dataset: { ex: String(exIdx), series: String(seriesIdx), field: field.key },
   });
-  input.value = value === null || value === undefined ? '' : String(value);
+  input.value = value === null || value === undefined ? '' : String(isKg ? kgToDisplay(value) : value);
   return input;
 }
 
@@ -244,7 +296,7 @@ export function renderHistory(container, sessions, expandedIds, filtered = false
         h('div', { class: 'session-info' },
           h('div', { class: 'session-title' }, session.name),
           h('div', { class: 'session-date' }, formatDate(session.startedAt)),
-          sessionVolume(session) > 0 ? h('div', { class: 'session-volume' }, `${fmtKg(sessionVolume(session))} kg de volumen`) : null,
+          sessionVolume(session) > 0 ? h('div', { class: 'session-volume' }, `${fmtKg(sessionVolume(session))} ${unitLabel()} de volumen`) : null,
         ),
         h('div', { class: 'session-actions' },
           h('button', { class: 'btn-delete', title: 'Borrar sesión', 'aria-label': 'Borrar sesión', dataset: { action: 'delete-session', id } }, '🗑'),

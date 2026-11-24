@@ -29,10 +29,14 @@
           <div class="home-subtitle">Tu plan personalizado</div>
         </div>
 
+        <div id="home-notices"></div>
         <div id="sessions-list"></div>
 
         <button class="btn btn-secondary mt-20 mb-16" data-action="go-screen" data-screen="history">
           📊 Ver historial
+        </button>
+        <button class="btn btn-secondary mb-16" data-action="go-screen" data-screen="settings">
+          ⚙️ Ajustes
         </button>
 
         <div class="info-box">
@@ -99,6 +103,11 @@
           📋 Copiar para pegar en el chat
         </button>
 
+        <button class="btn btn-secondary mt-10" data-action="share-card" id="share-card-btn">
+          🖼️ Compartir imagen
+        </button>
+        <div class="share-preview" id="share-preview" hidden></div>
+
         <button class="btn btn-secondary mt-10" data-action="go-screen" data-screen="history">
           📊 Ver historial
         </button>
@@ -123,7 +132,7 @@
           <div class="data-box-title">⚖️ Apuntar peso y medidas</div>
           <div class="body-grid">
             <label class="field"><span>Fecha</span><input type="date" id="body-date" class="text-input" required></label>
-            <label class="field"><span>Peso (kg)</span><input type="text" inputmode="decimal" id="body-weight" class="text-input" data-key="weight" autocomplete="off" maxlength="6"></label>
+            <label class="field"><span id="body-weight-label">Peso (kg)</span><input type="text" inputmode="decimal" id="body-weight" class="text-input" data-key="weight" autocomplete="off" maxlength="6"></label>
             <label class="field"><span>Cintura (cm)</span><input type="text" inputmode="decimal" class="text-input" data-key="waist" autocomplete="off" maxlength="6"></label>
             <label class="field"><span>Pecho (cm)</span><input type="text" inputmode="decimal" class="text-input" data-key="chest" autocomplete="off" maxlength="6"></label>
             <label class="field"><span>Brazo (cm)</span><input type="text" inputmode="decimal" class="text-input" data-key="arm" autocomplete="off" maxlength="6"></label>
@@ -148,6 +157,24 @@
           <div id="import-preview" class="import-preview" role="region" aria-live="polite" hidden></div>
         </section>
       </div>
+    </div>
+
+    <!-- SETTINGS SCREEN -->
+    <div class="screen" id="screen-settings">
+      <header>
+        <button class="btn btn-back" data-action="go-back">← Volver</button>
+        <h1>Ajustes</h1>
+      </header>
+      <div class="content" id="settings-container"></div>
+    </div>
+
+    <!-- PLATES SCREEN -->
+    <div class="screen" id="screen-plates">
+      <header>
+        <button class="btn btn-back" data-action="go-back">← Volver</button>
+        <h1>Calculadora de discos</h1>
+      </header>
+      <div class="content" id="plates-container"></div>
     </div>
   </div>
 

@@ -3,6 +3,8 @@
 import { h, renderHistory, formatDate } from './views.js';
 import { lineChart, barChart } from './charts.js';
 import { formatSeriesLine, fieldsForExerciseId, BODY_FIELDS } from './data.js';
+import { kgToDisplay, unitLabel, fmtWeightNum } from './units.js';
+import { muscleVolume, undertrained, MIN_WEEKLY_SETS } from './progress.js';
 import {
   listExercises, exerciseProgress, exerciseBests, weeklyStats, weekStreaks, calendarMonth,
   buildWeeklySummary, bodySeries, fmtKg, pairsWeightReps, addWeeks, weekStart, keyToTs,
@@ -12,6 +14,7 @@ export const TABS = [
   ['sessions', 'Sesiones'],
   ['exercises', 'Ejercicios'],
   ['trends', 'Gráficas'],
+  ['muscles', 'Músculos'],
   ['calendar', 'Calendario'],
   ['body', 'Cuerpo'],
 ];
@@ -48,10 +51,10 @@ export function filterSessions(sessions, search, plan) {
 function bestsGrid(b) {
   const cell = (label, value) => h('div', { class: 'best-cell' }, h('div', { class: 'best-value' }, value), h('div', { class: 'best-label' }, label));
   return h('div', { class: 'best-grid' },
-    cell('Peso máx.', `${b.weight} kg`),
-    cell('1RM estimado', `${b.oneRM} kg`),
+    cell('Peso máx.', `${fmtWeightNum(b.weight)} ${unitLabel()}`),
+    cell('1RM estimado', `${fmtWeightNum(b.oneRM)} ${unitLabel()}`),
     cell('Reps máx.', String(b.maxReps)),
-    cell('Volumen máx.', `${fmtKg(b.volume)} kg`),
+    cell('Volumen máx.', `${fmtKg(b.volume)} ${unitLabel()}`),
   );
 }
 
@@ -68,10 +71,10 @@ function exerciseDetail(state, data) {
     if (bests && progress.length) {
       out.push(card('Mejores marcas', bestsGrid(bests)));
       const chart = lineChart([
-        { name: '1RM estimado', cls: 'series-a', points: progress.map(p => ({ x: p.ts, y: Math.round(p.best1RM * 10) / 10 })) },
-        { name: 'Peso máximo', cls: 'series-b', points: progress.map(p => ({ x: p.ts, y: p.topWeight })) },
+        { name: '1RM estimado', cls: 'series-a', points: progress.map(p => ({ x: p.ts, y: Math.round(kgToDisplay(p.best1RM) * 10) / 10 })) },
+        { name: 'Peso máximo', cls: 'series-b', points: progress.map(p => ({ x: p.ts, y: kgToDisplay(p.topWeight) })) },
       ], { title: `Progresión de ${info.name}`, xLabel: shortDay });
-      out.push(card('Progresión (kg)', chart, h('div', { class: 'chart-legend' },
+      out.push(card(`Progresión (${unitLabel()})`, chart, h('div', { class: 'chart-legend' },
         h('span', { class: 'legend-a' }, '1RM estimado (Epley)'), h('span', { class: 'legend-b' }, 'Peso máximo'))));
     } else {
       out.push(empty('📈', 'Sin series válidas', 'Hacen falta series hechas con kg y reps (sin calentamiento).'));
@@ -104,7 +107,7 @@ function exerciseList(state, data) {
     return h('button', { class: 'list-row', dataset: { action: 'select-exercise', id: e.id } },
       h('span', { class: 'list-main' }, h('span', { class: 'list-title' }, e.name),
         h('span', { class: 'list-sub' }, `${e.sessions} ${e.sessions === 1 ? 'sesión' : 'sesiones'} · último ${formatDate(e.last)}`)),
-      h('span', { class: 'list-side' }, bests ? `${bests.oneRM} kg` : ''),
+      h('span', { class: 'list-side' }, bests ? `${fmtWeightNum(bests.oneRM)} ${unitLabel()}` : ''),
     );
   });
 }
@@ -114,14 +117,14 @@ function trends(state, data, now) {
   if (!data.sessions.length) return [empty('📊', 'Sin datos todavía', 'Las gráficas aparecen al guardar tu primera sesión')];
   const weeks = weeklyStats(data.sessions, 8, now);
   const label = w => String(new Date(w.start).getDate());
-  const volume = barChart(weeks.map(w => ({ label: label(w), value: Math.round(w.volume) })), { title: 'Volumen semanal en kg' });
+  const volume = barChart(weeks.map(w => ({ label: label(w), value: Math.round(kgToDisplay(w.volume)) })), { title: `Volumen semanal en ${unitLabel()}` });
   const freq = barChart(weeks.map(w => ({ label: label(w), value: w.sessions })), { title: 'Sesiones por semana', cls: 'chart-bar alt' });
 
   const weekTs = addWeeks(weekStart(now), -state.weekOffset);
   const text = buildWeeklySummary(data.sessions, data.body, weekTs);
   const streak = weekStreaks(data.sessions, now);
   return [
-    card('Volumen semanal (kg)', volume, h('div', { class: 'chart-note' }, 'Eje X: día del mes en que empieza cada semana (lunes)')),
+    card(`Volumen semanal (${unitLabel()})`, volume, h('div', { class: 'chart-note' }, 'Eje X: día del mes en que empieza cada semana (lunes)')),
     card('Sesiones por semana', freq),
     card('Resumen semanal',
       h('div', { class: 'week-nav' },
@@ -165,13 +168,45 @@ function calendar(state, data, now) {
   ];
 }
 
+// ==================== MÚSCULOS ====================
+function muscles(state, data, now) {
+  const weekTs = addWeeks(weekStart(now), -state.weekOffset);
+  const vol = muscleVolume(data.sessions, weekTs);
+  const low = new Set(undertrained(vol, weekTs, now).map(r => r.id));
+  const max = Math.max(MIN_WEEKLY_SETS * 2, ...vol.rows.map(r => r.sets));
+  const label = state.weekOffset === 0 ? 'Esta semana (en curso)' : `Hace ${state.weekOffset} ${state.weekOffset === 1 ? 'semana' : 'semanas'}`;
+  const out = [
+    h('div', { class: 'week-nav' },
+      h('button', { class: 'btn btn-secondary', dataset: { action: 'summary-week', delta: '1' }, 'aria-label': 'Semana anterior' }, '‹'),
+      h('div', { class: 'week-label', id: 'muscle-week-label' }, label),
+      h('button', { class: 'btn btn-secondary', dataset: { action: 'summary-week', delta: '-1' }, disabled: state.weekOffset === 0, 'aria-label': 'Semana siguiente' }, '›'),
+    ),
+  ];
+  if (vol.sessions === 0) {
+    out.push(empty('💪', 'Sin sesiones esa semana', 'Elige otra semana o completa una sesión'));
+  } else {
+    out.push(card('Series por músculo', ...vol.rows.map(r => h('div', { class: 'muscle-row' + (low.has(r.id) ? ' low' : ''), dataset: { muscle: r.id } },
+      h('div', { class: 'muscle-head' },
+        h('span', { class: 'muscle-name' }, r.label),
+        h('span', { class: 'muscle-sets' }, `${r.sets} ${r.sets === 1 ? 'serie' : 'series'}${r.volume > 0 ? ` · ${fmtKg(r.volume)} ${unitLabel()}` : ''}`),
+      ),
+      h('meter', { class: 'muscle-meter', min: '0', max: String(max), low: String(MIN_WEEKLY_SETS), optimum: String(max), value: String(r.sets), 'aria-label': `${r.label}: ${r.sets} series` }),
+      low.has(r.id) ? h('div', { class: 'muscle-warn' }, `Por debajo de ${MIN_WEEKLY_SETS} series esa semana`) : null,
+    ))));
+    if (vol.unassigned > 0) out.push(h('div', { class: 'chart-note' }, `${vol.unassigned} series de ejercicios sin músculo asignado (sustituidos) no se cuentan.`));
+  }
+  out.push(h('div', { class: 'info-box mt-10' },
+    `Cómo se calcula: cada serie hecha (sin calentamiento) cuenta una vez para el músculo del ejercicio según el mapa del plan; las superseries cuentan para sus dos músculos. El aviso salta si una semana ya terminada queda por debajo de ${MIN_WEEKLY_SETS} series. Es una referencia fija y orientativa, no un consejo personalizado.`));
+  return out;
+}
+
 // ==================== CUERPO ====================
 function body(data) {
   const out = [];
   const w = bodySeries(data.body, 'weight');
   if (w.length) {
-    const chart = lineChart([{ name: 'Peso corporal', cls: 'series-a', points: w.map(p => ({ x: p.ts, y: p.value })) }], { title: 'Peso corporal en kg', xLabel: shortDay });
-    out.push(card('Peso corporal (kg)', chart));
+    const chart = lineChart([{ name: 'Peso corporal', cls: 'series-a', points: w.map(p => ({ x: p.ts, y: kgToDisplay(p.value) })) }], { title: `Peso corporal en ${unitLabel()}`, xLabel: shortDay });
+    out.push(card(`Peso corporal (${unitLabel()})`, chart));
   }
   for (const f of BODY_FIELDS.slice(1)) {
     const pts = bodySeries(data.body, f.key);
@@ -186,7 +221,7 @@ function body(data) {
   out.push(card('Registros', ...list.map(b => h('div', { class: 'body-row' },
     h('div', { class: 'body-row-main' },
       h('div', { class: 'exercise-name' }, formatDate(keyToTs(b.date))),
-      h('div', { class: 'series-line' }, BODY_FIELDS.filter(f => b[f.key] !== null).map(f => `${f.label} ${String(b[f.key]).replace('.', ',')} ${f.unit}`).join(' · ')),
+      h('div', { class: 'series-line' }, BODY_FIELDS.filter(f => b[f.key] !== null).map(f => `${f.label} ${String(f.key === 'weight' ? kgToDisplay(b[f.key]) : b[f.key]).replace('.', ',')} ${f.key === 'weight' ? unitLabel() : f.unit}`).join(' · ')),
     ),
     h('button', { class: 'btn-delete', 'aria-label': `Borrar medida del ${b.date}`, dataset: { action: 'delete-body', date: b.date } }, '🗑'),
   ))));
@@ -203,6 +238,8 @@ export function renderHistoryView(container, state, data, expandedIds, now = Dat
     container.replaceChildren(...(state.exerciseId ? exerciseDetail(state, data) : exerciseList(state, data)));
   } else if (state.tab === 'trends') {
     container.replaceChildren(...trends(state, data, now));
+  } else if (state.tab === 'muscles') {
+    container.replaceChildren(...muscles(state, data, now));
   } else if (state.tab === 'calendar') {
     container.replaceChildren(...calendar(state, data, now));
   } else if (state.tab === 'body') {
