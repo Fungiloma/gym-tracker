@@ -52,7 +52,7 @@ test('CSP por meta con la política del plan, antes de cualquier recurso', () =>
 });
 
 test('los módulos JS no usan innerHTML/outerHTML, eval ni estilos por atributo', () => {
-  for (const f of ['plan', 'data', 'storage', 'timers', 'views', 'app', 'stats', 'charts', 'history']) {
+  for (const f of ['plan', 'data', 'storage', 'timers', 'views', 'app', 'stats', 'charts', 'history', 'routines', 'editor']) {
     const src = read(`js/${f}.js`);
     assert.ok(!/\b(innerHTML|outerHTML|insertAdjacentHTML)\b/.test(src), `${f}.js usa HTML como texto`);
     assert.ok(!/\beval\s*\(|new Function\s*\(/.test(src), `${f}.js usa eval`);

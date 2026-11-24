@@ -5,7 +5,8 @@ import {
   plateBreakdown, MIN_WEEKLY_SETS, DEFAULT_PLATES, DEFAULT_BAR,
 } from '../js/progress.js';
 import { weekStart } from '../js/stats.js';
-import { findPlanExercise, PLAN, MUSCLES, musclesOf } from '../js/plan.js';
+import { findPlanExercise, planSessions, MUSCLES, musclesOf } from '../js/plan.js';
+const PLAN = planSessions();
 import { setUnit, progressionStepKg } from '../js/units.js';
 
 afterEach(() => setUnit('kg'));
