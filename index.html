@@ -93,6 +93,8 @@
           <pre id="summary-text" class="summary-text"></pre>
         </div>
 
+        <div class="records-box" id="summary-records" role="status" hidden></div>
+
         <button class="btn btn-primary mt-16" data-action="copy-summary" id="copy-btn">
           📋 Copiar para pegar en el chat
         </button>
@@ -110,6 +112,27 @@
         <h1>Historial</h1>
       </header>
       <div class="content">
+        <div class="tabs" role="tablist" aria-label="Secciones del historial" id="history-tabs"></div>
+
+        <div class="filter-row" id="history-filters">
+          <input type="search" id="history-search" class="text-input" placeholder="Buscar sesión o ejercicio" aria-label="Buscar" autocomplete="off" maxlength="60">
+          <select id="history-plan" class="text-input" aria-label="Filtrar por sesión del plan"></select>
+        </div>
+
+        <form class="body-form" id="body-form" hidden novalidate>
+          <div class="data-box-title">⚖️ Apuntar peso y medidas</div>
+          <div class="body-grid">
+            <label class="field"><span>Fecha</span><input type="date" id="body-date" class="text-input" required></label>
+            <label class="field"><span>Peso (kg)</span><input type="text" inputmode="decimal" id="body-weight" class="text-input" data-key="weight" autocomplete="off" maxlength="6"></label>
+            <label class="field"><span>Cintura (cm)</span><input type="text" inputmode="decimal" class="text-input" data-key="waist" autocomplete="off" maxlength="6"></label>
+            <label class="field"><span>Pecho (cm)</span><input type="text" inputmode="decimal" class="text-input" data-key="chest" autocomplete="off" maxlength="6"></label>
+            <label class="field"><span>Brazo (cm)</span><input type="text" inputmode="decimal" class="text-input" data-key="arm" autocomplete="off" maxlength="6"></label>
+            <label class="field"><span>Muslo (cm)</span><input type="text" inputmode="decimal" class="text-input" data-key="thigh" autocomplete="off" maxlength="6"></label>
+          </div>
+          <div class="field-error" id="body-error" role="alert" hidden></div>
+          <button type="button" class="btn btn-primary mt-10" data-action="save-body">Guardar medida</button>
+        </form>
+
         <div id="history-container"></div>
 
         <section class="data-box" aria-labelledby="data-box-title">

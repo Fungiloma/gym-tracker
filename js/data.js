@@ -1,6 +1,8 @@
 // Modelo de datos v2 (funciones puras, sin DOM ni almacenamiento).
 //
-// gymtracker.data = { schemaVersion: 2, sessions: Session[], settings: {} }
+// gymtracker.data = { schemaVersion: 2, sessions: Session[], body: BodyEntry[], settings: {} }
+// BodyEntry = { date: 'YYYY-MM-DD', weight|null (kg), waist|null, chest|null, arm|null, thigh|null (cm) }
+//             una entrada por fecha, al menos una medida; `body` es opcional en ficheros v2 antiguos.
 // Session  = { id, planSessionId|null, name, startedAt, endedAt|null, notes, exercises: Exercise[] }
 // Exercise = { id, name, notes, series: Series[] }
 // Series   = { type, target, weight|null, weight2|null, repsDone|null, rpe|null, done }
@@ -17,12 +19,15 @@ export const LIMITS = {
   weight2: { min: 0, max: 1000 },
   repsDone: { min: 0, max: 1000, integer: true },
   rpe: { min: 1, max: 10 },
+  bodyWeight: { min: 20, max: 500 },
+  bodyCm: { min: 10, max: 300 },
   name: 120,
   notes: 2000,
   target: 60,
   exercises: 50,
   series: 50,
   sessions: 20000,
+  body: 5000,
   importBytes: 5_000_000,
 };
 
@@ -62,7 +67,7 @@ export function newId(now = Date.now()) {
 }
 
 export function emptyData() {
-  return { schemaVersion: SCHEMA_VERSION, sessions: [], settings: {} };
+  return { schemaVersion: SCHEMA_VERSION, sessions: [], body: [], settings: {} };
 }
 
 export function fieldsForExerciseId(id) {
@@ -182,6 +187,80 @@ function collectSessions(list, convert) {
   return { sessions, rejected };
 }
 
+// ==================== PESO CORPORAL Y MEDIDAS ====================
+export const BODY_FIELDS = [
+  { key: 'weight', label: 'Peso', unit: 'kg', limits: 'bodyWeight' },
+  { key: 'waist', label: 'Cintura', unit: 'cm', limits: 'bodyCm' },
+  { key: 'chest', label: 'Pecho', unit: 'cm', limits: 'bodyCm' },
+  { key: 'arm', label: 'Brazo', unit: 'cm', limits: 'bodyCm' },
+  { key: 'thigh', label: 'Muslo', unit: 'cm', limits: 'bodyCm' },
+];
+
+export function isDateKey(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d
+    && t.getTime() >= MIN_TS && t.getTime() < MAX_TS;
+}
+
+function bodyNumber(v, limits, field) {
+  if (v === undefined || v === null) return null;
+  check(typeof v === 'number' && Number.isFinite(v) && v >= limits.min && v <= limits.max, `${field}: valor fuera de rango`);
+  return v;
+}
+
+export function validateBodyEntry(raw) {
+  try {
+    check(isPlainObject(raw), 'medida: no es un objeto');
+    check(isDateKey(raw.date), 'medida: fecha inválida');
+    const entry = { date: raw.date };
+    for (const f of BODY_FIELDS) entry[f.key] = bodyNumber(raw[f.key], LIMITS[f.limits], f.key);
+    check(BODY_FIELDS.some(f => entry[f.key] !== null), 'medida: sin ningún valor');
+    return { ok: true, entry };
+  } catch (e) {
+    if (e instanceof ValidationError) return { ok: false, error: e.message };
+    throw e;
+  }
+}
+
+// Convierte lo que escribe el usuario (coma decimal, vacío) en una entrada validada.
+export function parseBodyInput(date, raws) {
+  const out = { date };
+  for (const f of BODY_FIELDS) {
+    const raw = raws && raws[f.key];
+    if (raw === undefined || raw === null || String(raw).trim() === '') { out[f.key] = null; continue; }
+    const t = String(raw).trim().replace(',', '.');
+    if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return { ok: false, error: `${f.label}: valor no válido` };
+    out[f.key] = Number(t);
+  }
+  const r = validateBodyEntry(out);
+  return r.ok ? r : { ok: false, error: r.error.replace(/^medida: /, '') };
+}
+
+function collectBody(list) {
+  const body = [];
+  const rejected = [];
+  const seen = new Set();
+  list.slice(0, LIMITS.body).forEach((raw, index) => {
+    const r = validateBodyEntry(raw);
+    if (!r.ok) rejected.push({ index, error: r.error, kind: 'body' });
+    else if (seen.has(r.entry.date)) rejected.push({ index, error: 'medida: fecha duplicada', kind: 'body' });
+    else {
+      seen.add(r.entry.date);
+      body.push(r.entry);
+    }
+  });
+  if (list.length > LIMITS.body) rejected.push({ index: LIMITS.body, error: 'demasiadas medidas', kind: 'body' });
+  body.sort((a, b) => (a.date < b.date ? -1 : 1));
+  return { body, rejected };
+}
+
+// Una entrada por fecha: guardar de nuevo la misma fecha la sustituye. Devuelve lista nueva ordenada.
+export function upsertBody(body, entry) {
+  return [...body.filter(b => b.date !== entry.date), entry].sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
 // Valida un documento v2 completo. Lanza si la raíz no es v2; las sesiones inválidas
 // se devuelven aparte en `rejected` para que quien llama decida.
 export function validateData(raw) {
@@ -189,9 +268,11 @@ export function validateData(raw) {
   check(raw.schemaVersion === SCHEMA_VERSION, 'documento: schemaVersion no soportada');
   check(Array.isArray(raw.sessions), 'documento: sessions no es una lista');
   check(raw.settings === undefined || isPlainObject(raw.settings), 'documento: settings inválido');
+  check(raw.body === undefined || Array.isArray(raw.body), 'documento: body no es una lista');
   const { sessions, rejected } = collectSessions(raw.sessions, validateSession);
+  const b = collectBody(raw.body || []);
   // Aún no hay ajustes conocidos (fase 5): se descarta cualquier clave.
-  return { data: { schemaVersion: SCHEMA_VERSION, sessions, settings: {} }, rejected };
+  return { data: { schemaVersion: SCHEMA_VERSION, sessions, body: b.body, settings: {} }, rejected: [...rejected, ...b.rejected] };
 }
 
 export function tryValidateData(raw) {
@@ -630,13 +711,14 @@ export function buildExport(data, now = Date.now()) {
     schemaVersion: SCHEMA_VERSION,
     exportedAt: new Date(now).toISOString(),
     sessions: data.sessions,
+    body: data.body || [],
     settings: data.settings,
   };
 }
 
 // Analiza un fichero de import. No modifica nada: devuelve lo que se fusionaría.
-// { ok: false, error } | { ok: true, format, sessions, fresh, duplicates, rejected }
-export function parseImport(textContent, existing = []) {
+// { ok: false, error } | { ok: true, format, sessions, fresh, duplicates, rejected, freshBody }
+export function parseImport(textContent, existing = [], existingBody = []) {
   if (typeof textContent !== 'string') return { ok: false, error: 'Fichero ilegible' };
   if (textContent.length > LIMITS.importBytes) return { ok: false, error: 'Fichero demasiado grande' };
   let raw;
@@ -648,6 +730,7 @@ export function parseImport(textContent, existing = []) {
 
   let result;
   let format;
+  let body = [];
   if (Array.isArray(raw)) {
     format = 'v1';
     result = fromV1Sessions(raw);
@@ -656,6 +739,7 @@ export function parseImport(textContent, existing = []) {
     const r = tryValidateData(raw);
     if (!r.ok) return { ok: false, error: `Formato inválido: ${r.error}` };
     result = { sessions: r.data.sessions, rejected: r.rejected };
+    body = r.data.body;
   } else if (isPlainObject(raw) && typeof raw.schemaVersion === 'number' && raw.schemaVersion > SCHEMA_VERSION) {
     return { ok: false, error: 'El fichero es de una versión más nueva de la app' };
   } else {
@@ -663,6 +747,7 @@ export function parseImport(textContent, existing = []) {
   }
 
   const known = new Set(existing.map(s => s.id));
+  const knownDates = new Set(existingBody.map(b => b.date));
   const fresh = result.sessions.filter(s => !known.has(s.id));
   return {
     ok: true,
@@ -671,10 +756,17 @@ export function parseImport(textContent, existing = []) {
     fresh,
     duplicates: result.sessions.length - fresh.length,
     rejected: result.rejected,
+    freshBody: body.filter(b => !knownDates.has(b.date)),
   };
 }
 
 // Fusión por id: lo local nunca se sobrescribe; solo se añaden ids nuevos.
+export function mergeBody(existing, incoming) {
+  const known = new Set(existing.map(b => b.date));
+  const added = incoming.filter(b => !known.has(b.date));
+  return { body: [...existing, ...added].sort((a, b) => (a.date < b.date ? -1 : 1)), added: added.length };
+}
+
 export function mergeSessions(existing, incoming) {
   const known = new Set(existing.map(s => s.id));
   const added = incoming.filter(s => !known.has(s.id));
