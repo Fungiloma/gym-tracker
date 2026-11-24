@@ -800,7 +800,6 @@
 
     // ==================== STATE ====================
     let state = {
-      currentScreen: 'home',
       activeSession: null,
       sessionData: {},
       timers: {},
@@ -855,8 +854,6 @@
       const target = document.getElementById(`screen-${name}`);
       if (target) {
         target.classList.add('active');
-        state.currentScreen = name;
-        saveState();
 
         // Renderizar pantalla específica
         if (name === 'home') renderHome();
@@ -1006,15 +1003,6 @@
         inputHTML +
         timerHTML +
       '</div>';
-    }
-
-    function updateSessionData(exName, seriesIdx, field, value) {
-      if (!state.sessionData[exName]) return;
-      state.sessionData[exName][seriesIdx] = {
-        ...state.sessionData[exName][seriesIdx],
-        [field]: value
-      };
-      saveState();
     }
 
     // ==================== TIMERS ====================
