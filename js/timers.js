@@ -47,6 +47,19 @@ export function toggleTimer(timer, now) {
   return timer;
 }
 
+// Descarta temporizadores guardados con forma inválida (clave o números).
+export function sanitizeTimers(timers) {
+  const out = {};
+  if (!timers || typeof timers !== 'object') return out;
+  for (const [key, t] of Object.entries(timers)) {
+    if (!isTimerKey(key) || !t || typeof t !== 'object') continue;
+    const { duration, endTs, remaining } = t;
+    if (![duration, endTs, remaining].every(Number.isFinite) || duration <= 0) continue;
+    out[key] = { duration, endTs, paused: t.paused === true, remaining };
+  }
+  return out;
+}
+
 export function beep() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();

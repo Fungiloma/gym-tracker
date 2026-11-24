@@ -1,63 +1,148 @@
-// Persistencia en localStorage. Claves con prefijo propio para no chocar con otras
-// apps del mismo origen (fungiloma.github.io). Las claves antiguas se leen como
-// respaldo si la nueva no existe y nunca se borran.
+// Persistencia en localStorage (esquema v2).
+// - gymtracker.data   datos: { schemaVersion, sessions, settings }
+// - gymtracker.draft  sesión en curso (borrador), separada de los datos
+// - gymtracker.ui     estado de interfaz: temporizadores y tarjetas expandidas
+// Las claves v1 (gymtracker.sessions/state y gym-sessions/state) solo se leen, nunca se
+// escriben ni se borran. Si gymtracker.data está dañado, se copia tal cual a
+// gymtracker.data.backup antes de que nada lo pueda sobrescribir.
+import { emptyData, tryValidateData, fromV1Sessions, restoreDraft, isPlainObject } from './data.js';
+
 export const KEYS = {
-  state: 'gymtracker.state',
+  data: 'gymtracker.data',
+  draft: 'gymtracker.draft',
+  ui: 'gymtracker.ui',
+  backup: 'gymtracker.data.backup',
+};
+
+export const V1_KEYS = {
   sessions: 'gymtracker.sessions',
+  state: 'gymtracker.state',
 };
 
 export const LEGACY_KEYS = {
-  state: 'gym-state',
   sessions: 'gym-sessions',
+  state: 'gym-state',
 };
 
 function defaultStorage() {
   return globalThis.localStorage;
 }
 
-function readJSON(storage, key, legacyKey) {
-  let raw = storage.getItem(key);
-  if (raw === null && legacyKey) raw = storage.getItem(legacyKey);
-  if (raw === null) return undefined;
-  return JSON.parse(raw);
-}
-
-function isPlainObject(v) {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
-
-export function loadState(defaults, storage = defaultStorage()) {
+function get(storage, key) {
   try {
-    const saved = readJSON(storage, KEYS.state, LEGACY_KEYS.state);
-    if (isPlainObject(saved)) return { ...defaults, ...saved };
+    return storage.getItem(key);
   } catch (e) {
-    console.warn('Error loading state:', e);
-  }
-  return { ...defaults };
-}
-
-export function saveState(state, storage = defaultStorage()) {
-  try {
-    storage.setItem(KEYS.state, JSON.stringify(state));
-  } catch (e) {
-    console.warn('Error saving state:', e);
+    console.warn('Error reading', key, e);
+    return null;
   }
 }
 
-export function loadSessions(storage = defaultStorage()) {
+export function isQuotaError(e) {
+  return !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
+}
+
+// { ok: true } | { ok: false, quota, error }
+function put(storage, key, value) {
   try {
-    const saved = readJSON(storage, KEYS.sessions, LEGACY_KEYS.sessions);
-    return Array.isArray(saved) ? saved : [];
+    storage.setItem(key, value);
+    return { ok: true };
   } catch (e) {
-    console.warn('Error loading sessions:', e);
-    return [];
+    console.warn('Error saving', key, e);
+    return { ok: false, quota: isQuotaError(e), error: e };
   }
 }
 
-export function saveSessions(sessions, storage = defaultStorage()) {
+function backupRaw(storage, raw) {
+  put(storage, KEYS.backup, raw);
+}
+
+// Devuelve { data, source, rejected } con source: 'v2' | 'v1' | 'empty' | 'corrupt'.
+export function loadData(storage = defaultStorage()) {
+  const raw = get(storage, KEYS.data);
+  if (raw !== null) {
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      backupRaw(storage, raw);
+      return { data: emptyData(), source: 'corrupt', rejected: [] };
+    }
+    const r = tryValidateData(parsed);
+    if (!r.ok) {
+      backupRaw(storage, raw);
+      return { data: emptyData(), source: 'corrupt', rejected: [{ index: -1, error: r.error }] };
+    }
+    if (r.rejected.length) backupRaw(storage, raw);
+    return { data: r.data, source: 'v2', rejected: r.rejected };
+  }
+
+  let v1raw = get(storage, V1_KEYS.sessions);
+  if (v1raw === null) v1raw = get(storage, LEGACY_KEYS.sessions);
+  if (v1raw === null) return { data: emptyData(), source: 'empty', rejected: [] };
+  let parsed;
   try {
-    storage.setItem(KEYS.sessions, JSON.stringify(sessions));
+    parsed = JSON.parse(v1raw);
+  } catch {
+    return { data: emptyData(), source: 'empty', rejected: [{ index: -1, error: 'v1 ilegible' }] };
+  }
+  const { sessions, rejected } = fromV1Sessions(parsed);
+  return { data: { ...emptyData(), sessions }, source: 'v1', rejected };
+}
+
+export function saveData(data, storage = defaultStorage()) {
+  return put(storage, KEYS.data, JSON.stringify(data));
+}
+
+export function loadDraft(storage = defaultStorage()) {
+  const raw = get(storage, KEYS.draft);
+  if (raw === null) return null;
+  try {
+    return restoreDraft(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+export function saveDraft(draft, storage = defaultStorage()) {
+  return put(storage, KEYS.draft, JSON.stringify(draft));
+}
+
+export function clearDraft(storage = defaultStorage()) {
+  try {
+    storage.removeItem(KEYS.draft);
   } catch (e) {
-    console.warn('Error saving sessions:', e);
+    console.warn('Error clearing draft', e);
+  }
+}
+
+export function loadUi(defaults, storage = defaultStorage()) {
+  const raw = get(storage, KEYS.ui);
+  const out = { ...defaults };
+  if (raw === null) return out;
+  try {
+    const saved = JSON.parse(raw);
+    if (!isPlainObject(saved)) return out;
+    if (Array.isArray(saved.expandedSessions)) {
+      out.expandedSessions = saved.expandedSessions.filter(x => typeof x === 'string');
+    }
+    if (isPlainObject(saved.timers)) out.timers = saved.timers;
+  } catch (e) {
+    console.warn('Error loading ui state:', e);
+  }
+  return out;
+}
+
+export function saveUi(ui, storage = defaultStorage()) {
+  return put(storage, KEYS.ui, JSON.stringify(ui));
+}
+
+// Pide almacenamiento persistente (Chrome Android lo concede según uso/instalación).
+export async function requestPersistence(nav = globalThis.navigator) {
+  try {
+    if (!nav || !nav.storage || typeof nav.storage.persist !== 'function') return false;
+    if (typeof nav.storage.persisted === 'function' && await nav.storage.persisted()) return true;
+    return await nav.storage.persist();
+  } catch {
+    return false;
   }
 }
