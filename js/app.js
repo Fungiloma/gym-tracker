@@ -9,6 +9,7 @@ import {
   getSettings, applySetting, fieldsForExerciseId,
 } from './data.js';
 import { setUnit, getUnit, unitLabel, inputToKg, kgToDisplay, progressionStepKg } from './units.js';
+import { registerServiceWorker, shortcutIndex, hasShortcutParam } from './pwa.js';
 import { suggestOverload, deloadNotices } from './progress.js';
 import { renderSettings, renderPlates, renderPlateResult, readPlatesForm, defaultBarKg, defaultPlatesKg } from './tools.js';
 import { buildShareCard, renderShareCard, canvasToBlob } from './share.js';
@@ -1376,12 +1377,12 @@ function initEvents() {
   });
 }
 
-function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(err => {
-      console.warn('SW registration failed:', err);
-    });
-  }
+function initServiceWorker() {
+  registerServiceWorker(apply => {
+    const banner = $('update-banner');
+    $('update-reload').addEventListener('click', apply);
+    banner.hidden = false;
+  });
 }
 
 // ==================== INIT ====================
@@ -1412,7 +1413,7 @@ function init() {
 
   $('share-json-btn').hidden = !canShareFiles();
   initEvents();
-  registerServiceWorker();
+  initServiceWorker();
 
   history.replaceState({ screen: 'home', depth: 0 }, '');
   if (draft) {
@@ -1422,6 +1423,21 @@ function init() {
   } else {
     showScreen('home');
   }
+  openShortcut();
+}
+
+// Atajo del launcher (?session=N): empieza o reanuda esa rutina. Se limpia la query para que recargar no lo repita.
+function openShortcut() {
+  if (!hasShortcutParam(location.search)) return;
+  const list = planSessions();
+  const i = shortcutIndex(location.search, list.length);
+  history.replaceState(history.state, '', location.pathname + location.hash);
+  if (i === null) {
+    toast('Ese atajo no corresponde a ninguna rutina.', 'error');
+    return;
+  }
+  if (draft && draft.planSessionId === list[i].id && currentScreen === 'session') return;
+  startSession(list[i].id);
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
