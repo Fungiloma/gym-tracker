@@ -39,6 +39,8 @@ try {
     }
   });
   page.on('pageerror', e => problems.push(`pageerror: ${e.message}`));
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
 
   await page.goto(base);
   await page.waitForSelector('.session-btn');
@@ -53,14 +55,17 @@ try {
 
   await page.getByRole('button', { name: /Guardar sesión/ }).click();
   await page.waitForSelector('#screen-summary.active');
+  assert.match(dialogs.at(-1) || '', /series sin completar/, 'aviso de series sin completar');
   const summary = await page.locator('#summary-text').textContent();
   assert.match(summary, /42\.5kg/, 'el resumen no contiene el peso apuntado');
 
   await page.getByRole('button', { name: /historial/i }).click();
   await page.waitForSelector('#screen-history.active .session-header');
-  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.sessions')));
-  assert.equal(stored.length, 1, 'debe haber 1 sesión guardada');
-  assert.equal(stored[0].exercises[0].series[0].weight, '42.5');
+  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.data')));
+  assert.equal(stored.schemaVersion, 2);
+  assert.equal(stored.sessions.length, 1, 'debe haber 1 sesión guardada');
+  assert.equal(stored.sessions[0].exercises[0].series[0].weight, 42.5);
+  assert.equal(await page.evaluate(() => localStorage.getItem('gymtracker.draft')), null, 'borrador cerrado');
 
   await page.locator('.session-header').first().click();
   const historyText = await page.locator('#history-container').textContent();
