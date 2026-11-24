@@ -53,6 +53,7 @@
       <div class="content" id="exercises-container"></div>
       <div class="session-footer">
         <button class="btn btn-primary" data-action="complete-session">✅ Guardar sesión y ver feedback</button>
+        <button class="btn btn-ghost mt-10" data-action="discard-session">Descartar sesión</button>
       </div>
     </div>
 
@@ -90,9 +91,25 @@
         <button class="btn btn-back" data-action="go-screen" data-screen="home">← Volver</button>
         <h1>Historial</h1>
       </header>
-      <div class="content" id="history-container"></div>
+      <div class="content">
+        <div id="history-container"></div>
+
+        <section class="data-box" aria-labelledby="data-box-title">
+          <div class="data-box-title" id="data-box-title">💾 Copia de seguridad</div>
+          <div class="data-box-text">Los datos solo están en este móvil. Exporta de vez en cuando.</div>
+          <div class="data-actions">
+            <button class="btn btn-secondary" data-action="export-json">Descargar JSON</button>
+            <button class="btn btn-secondary" data-action="share-json" id="share-json-btn" hidden>Compartir JSON</button>
+            <button class="btn btn-secondary" data-action="export-csv">Descargar CSV</button>
+            <button class="btn btn-secondary" data-action="import-open">Importar JSON</button>
+          </div>
+          <input type="file" id="import-file" accept="application/json,.json" hidden>
+          <div id="import-preview" class="import-preview" role="region" aria-live="polite" hidden></div>
+        </section>
+      </div>
     </div>
   </div>
 
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 </body>
 </html>

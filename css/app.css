@@ -700,3 +700,88 @@ header .header-subtitle {
 .empty-state-title { font-size: 14px; font-weight: 600; }
 .empty-state-text { font-size: 12px; margin-top: 4px; }
 .clipboard-fallback { position: fixed; top: 0; left: 0; opacity: 0; }
+
+/* Fase 2: datos v2, borrador, export/import y avisos */
+[hidden] { display: none !important; }
+
+.series-inputs { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.input-reps {
+  width: 44px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: center;
+  outline: none;
+  flex-shrink: 0;
+}
+.input-reps:focus { border-color: var(--accent); }
+.kg-input[aria-invalid="true"] { border-color: var(--danger); }
+.series-block.done .series-number { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+
+.resume-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.resume-card-label { font-size: 11px; color: var(--accent-light); text-transform: uppercase; letter-spacing: 0.05em; }
+.resume-card-title { font-weight: 700; font-size: 15px; margin-top: 2px; }
+.resume-card-info { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.session-btn.in-progress { border-color: var(--accent); }
+
+.btn-ghost {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  width: 100%;
+  font-size: 13px;
+  padding: 10px;
+}
+
+.data-box {
+  margin-top: 20px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+}
+.data-box-title { font-weight: 700; font-size: 14px; }
+.data-box-text { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+.data-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.data-actions .btn { font-size: 13px; padding: 10px 8px; }
+
+.import-preview { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; font-size: 13px; }
+.import-title { font-weight: 700; margin-bottom: 6px; }
+.import-title.error { color: var(--danger); }
+.import-line { color: var(--text-secondary); margin-top: 2px; overflow-wrap: anywhere; }
+.import-line.warn { color: var(--warning); }
+.import-list { margin: 8px 0 0 18px; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.import-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.import-actions .btn[disabled] { opacity: 0.5; }
+
+.session-notes, .exercise-notes { font-size: 12px; color: var(--text-secondary); font-style: italic; margin-bottom: 4px; overflow-wrap: anywhere; }
+
+.toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + var(--safe-bottom));
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text-primary);
+  z-index: 100;
+}
+.toast.error { border-color: var(--danger); background: #2a1115; }

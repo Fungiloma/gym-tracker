@@ -26,15 +26,16 @@ async function waitServer() {
 }
 
 const XSS = '<img src=x onerror="window.__pwned=1">';
+const T0 = Date.UTC(2026, 10, 1, 18, 0);
 const legacySessions = [{
   id: 111,
-  timestamp: 1000,
+  timestamp: T0,
   date: XSS,
   session: `Sesión 1: Pecho + Hombro${XSS}`,
   exercises: [{ name: XSS, series: [{ reps: XSS, weight: '33', weight2: XSS }] }],
 }, {
   id: '1);window.__pwned=2;//',
-  timestamp: 2000,
+  timestamp: T0 + 1000,
   date: '2/2/2026',
   session: 'Sesión 2: Pierna',
   exercises: [],
@@ -54,8 +55,10 @@ try {
     }
   });
   page.on('pageerror', e => problems.push(`pageerror: ${e.message}`));
+  const dialogs = [];
   page.on('dialog', d => {
     if (d.type() !== 'confirm') problems.push(`dialog inesperado: ${d.type()} ${d.message()}`);
+    dialogs.push(d.message());
     d.accept();
   });
   await page.addInitScript(() => {
@@ -86,34 +89,38 @@ try {
   assert.equal(await oldest.locator('.session-details').isVisible(), false);
   await oldest.locator('.session-header').click();
   assert.equal(await page.locator('.session-card').nth(1).locator('.session-details').isVisible(), true);
-  assert.match(await page.locator('.session-card').nth(1).textContent(), /@ 33kg/);
-  let st = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.state')));
-  assert.deepEqual(st.expandedSessions, [111]);
+  assert.match(await page.locator('.session-card').nth(1).textContent(), /Serie 1: 33kg \(obj. <img/);
+  let st = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.ui')));
+  assert.deepEqual(st.expandedSessions, ['111']);
   await page.locator('.session-card').nth(1).locator('.session-header').click();
   assert.equal(await page.locator('.session-card').nth(1).locator('.session-details').isVisible(), false);
 
   await page.locator('.session-card').first().locator('[data-action="delete-session"]').click();
   assert.equal(await page.locator('.session-card').count(), 1, 'borrado por delegación');
   const stored = await page.evaluate(() => ({
-    next: JSON.parse(localStorage.getItem('gymtracker.sessions')),
+    next: JSON.parse(localStorage.getItem('gymtracker.data')),
     legacy: JSON.parse(localStorage.getItem('gym-sessions')),
   }));
-  assert.deepEqual(stored.next.map(s => s.id), [111]);
+  assert.equal(stored.next.schemaVersion, 2);
+  assert.deepEqual(stored.next.sessions.map(s => s.id), ['111']);
   assert.equal(stored.legacy.length, 2, 'la clave antigua no se toca');
   assert.equal(await page.evaluate(() => window.__pwned), undefined, 'se ejecutó código inyectado');
 
-  // 3. Volver a home e iniciar sesión: precarga kg de la última sesión de la clave antigua.
+  // 3. Volver a home e iniciar sesión: los inputs empiezan vacíos (el anterior va en placeholder).
   await page.locator('#screen-history [data-action="go-screen"][data-screen="home"]').click();
   await page.waitForSelector('#screen-home.active .session-btn');
   await page.locator('.session-btn').first().click();
   await page.waitForSelector('#screen-session.active .kg-input');
   assert.equal(await page.locator('#session-header-title').textContent(), 'Sesión 1: Pecho + Hombro');
+  assert.equal(await page.locator('#screen-session .kg-input').first().inputValue(), '');
 
-  // 4. Enter salta al siguiente input.
+  // 4. Enter salta al siguiente input (kg → reps de la misma serie → kg de la siguiente).
   const inputs = page.locator('#screen-session .kg-input');
   await inputs.nth(0).focus();
   await page.keyboard.press('Enter');
-  assert.equal(await page.evaluate(() => document.activeElement.dataset.series), '1');
+  assert.deepEqual(await page.evaluate(() => [document.activeElement.dataset.series, document.activeElement.dataset.field]), ['0', 'repsDone']);
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await page.evaluate(() => [document.activeElement.dataset.series, document.activeElement.dataset.field]), ['1', 'weight']);
 
   // 5. Timer: iniciar, pausar, reanudar, cancelar.
   const firstTimerBtn = page.locator('#screen-session [data-action="start-timer"]').first();
@@ -125,7 +132,7 @@ try {
   await page.waitForTimeout(1300);
   const t1 = await timer.locator('.timer-text').textContent();
   assert.match(t1, /^1:2\d$/, `timer corriendo: ${t1}`);
-  st = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.state')));
+  st = await page.evaluate(() => JSON.parse(localStorage.getItem('gymtracker.ui')));
   assert.equal(st.timers['0-0'].duration, 90);
 
   await timer.locator('[data-action="toggle-timer"]').click();
@@ -149,9 +156,11 @@ try {
   assert.equal(await page.locator('#screen-session .exercise-block').nth(2).locator('[data-action="start-timer"]').first().textContent(), '⏱ 15s');
 
   // 7. Superserie (sesión 2) con dos inputs y etiquetas; guardar y copiar resumen.
+  // Cambiar de sesión con un borrador abierto pide confirmación (el handler la acepta).
   await page.locator('#screen-session [data-action="go-screen"][data-screen="home"]').click();
   await page.locator('.session-btn').nth(1).click();
   await page.waitForSelector('#screen-session.active .input-superset');
+  assert.match(dialogs.at(-1), /sesión en curso \(Sesión 1: Pecho \+ Hombro\)/);
   await page.locator('.input-superset').nth(0).fill('40');
   await page.locator('.input-superset').nth(0).dispatchEvent('change');
   await page.locator('.input-superset').nth(1).fill('35');
@@ -159,7 +168,7 @@ try {
   assert.ok(await page.locator('.badge-superset').count() > 0, 'badge por clase');
   await page.locator('[data-action="complete-session"]').click();
   await page.waitForSelector('#screen-summary.active');
-  assert.match(await page.locator('#summary-text').textContent(), /@ 40kg \+ 35kg/);
+  assert.match(await page.locator('#summary-text').textContent(), /Serie 1: Extensión 40kg \+ Curl femoral 35kg/);
   await page.locator('[data-action="copy-summary"]').click();
   await page.waitForFunction(() => document.getElementById('copy-btn').textContent.includes('Copiado'));
   assert.ok(await page.locator('#copy-btn.copied').count() === 1);

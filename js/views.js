@@ -1,7 +1,8 @@
 // Render de pantallas. Todo el texto variable entra con textContent; no se inserta HTML como texto
 // con datos ni se interpolan identificadores en JS. Las acciones se declaran con
 // data-action y las resuelve la delegación de app.js.
-import { PLAN, BADGE, SUPERSET_LABELS, SESSION_KEYS, SESSION_EMOJIS, SESSION_DURATIONS } from './plan.js';
+import { PLAN, BADGE, getPlanSession, fieldsFor } from './plan.js';
+import { draftStats, formatPrevious, formatSeriesLine, fieldsForExerciseId } from './data.js';
 import { formatRest, formatRemaining, ringOffset, RING_CIRCUMFERENCE } from './timers.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -29,31 +30,42 @@ function svg(tag, attrs = {}) {
 }
 
 // ==================== HOME ====================
-export function renderHome(container) {
-  container.replaceChildren(...SESSION_KEYS.map((sessionName, i) => {
-    const exercises = PLAN[sessionName];
-    return h('button', {
-      class: 'session-btn' + (sessionName.includes('⭐') ? ' star' : ''),
-      dataset: { action: 'start-session', index: String(i) },
+export function renderHome(container, draft) {
+  const items = [];
+  const current = draft && getPlanSession(draft.planSessionId);
+  if (current) {
+    const started = new Date(draft.startedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+    const { filled, total } = draftStats(draft);
+    items.push(h('button', { class: 'resume-card', dataset: { action: 'resume-session' } },
+      h('div', { class: 'resume-card-label' }, 'Sesión en curso'),
+      h('div', { class: 'resume-card-title' }, current.name),
+      h('div', { class: 'resume-card-info' }, `Empezada a las ${started} · ${filled}/${total} series apuntadas · Continuar ›`),
+    ));
+  }
+  PLAN.forEach(p => {
+    items.push(h('button', {
+      class: 'session-btn' + (p.name.includes('⭐') ? ' star' : '') + (current && current.id === p.id ? ' in-progress' : ''),
+      dataset: { action: 'start-session', planId: p.id },
     },
-      h('div', { class: 'session-btn-emoji' }, SESSION_EMOJIS[i]),
+      h('div', { class: 'session-btn-emoji' }, p.emoji),
       h('div', { class: 'session-btn-content' },
-        h('div', { class: 'session-btn-title' }, sessionName),
-        h('div', { class: 'session-btn-info' }, `${exercises.length} ejercicios · ${SESSION_DURATIONS[i]} min`),
+        h('div', { class: 'session-btn-title' }, p.name),
+        h('div', { class: 'session-btn-info' }, `${p.exercises.length} ejercicios · ${p.duration} min`),
       ),
       h('div', { class: 'session-btn-arrow' }, '›'),
-    );
-  }));
+    ));
+  });
+  container.replaceChildren(...items);
 }
 
 // ==================== SESSION ====================
-export function renderSession(container, sessionName, sessionData, timers) {
-  const exercises = PLAN[sessionName] || [];
-  container.replaceChildren(...exercises.map((ex, exIdx) =>
-    buildExerciseBlock(ex, exIdx, sessionData[ex.name] || [], timers)));
+// previous: Map id de ejercicio → series de la última sesión del mismo tipo.
+export function renderSession(container, planSession, draft, timers, previous = new Map()) {
+  container.replaceChildren(...planSession.exercises.map((ex, exIdx) =>
+    buildExerciseBlock(ex, exIdx, draft.exercises[exIdx], timers, previous.get(ex.id) || [])));
 }
 
-function buildExerciseBlock(ex, exIdx, data, timers) {
+function buildExerciseBlock(ex, exIdx, data, timers, prevSeries) {
   const badge = BADGE[ex.type];
   return h('div', { class: 'exercise-block' },
     h('div', { class: 'exercise-header' },
@@ -63,36 +75,41 @@ function buildExerciseBlock(ex, exIdx, data, timers) {
       ),
       h('span', { class: 'badge badge-' + ex.type }, badge ? badge.label : ''),
     ),
-    ex.series.map((s, seriesIdx) => buildSeriesRow(ex, exIdx, s, seriesIdx, data, timers)),
+    ex.series.map((s, seriesIdx) =>
+      buildSeriesRow(ex, exIdx, s, seriesIdx, (data && data.series[seriesIdx]) || {}, timers, prevSeries[seriesIdx])),
   );
 }
 
-function kgInput(className, placeholder, value, exIdx, seriesIdx, field) {
+function valueInput(className, field, value, prevValue, exIdx, seriesIdx) {
+  const isKg = field.unit === 'kg';
+  const hasPrev = prevValue !== null && prevValue !== undefined;
   const input = h('input', {
     type: 'number',
     class: className + ' kg-input',
-    placeholder,
-    dataset: { ex: String(exIdx), series: String(seriesIdx), field },
+    inputmode: isKg ? 'decimal' : 'numeric',
+    step: isKg ? 'any' : '1',
+    min: '0',
+    placeholder: hasPrev ? String(prevValue) : field.unit,
+    'aria-label': `${field.label === field.unit ? field.unit : `${field.label} (${field.unit})`}, serie ${seriesIdx + 1}`
+      + (hasPrev ? `, anterior ${prevValue}` : ''),
+    dataset: { ex: String(exIdx), series: String(seriesIdx), field: field.key },
   });
-  input.value = value;
+  input.value = value === null || value === undefined ? '' : String(value);
   return input;
 }
 
-function buildSeriesRow(ex, exIdx, s, seriesIdx, data, timers) {
+function buildSeriesRow(ex, exIdx, s, seriesIdx, row, timers, prev) {
   const key = exIdx + '-' + seriesIdx;
-  const row = data[seriesIdx] || {};
+  const fields = fieldsFor(ex);
+  const superset = ex.type === 'superset';
+  const prevRow = prev || {};
 
-  let inputs;
-  if (ex.type === 'superset') {
-    const labels = SUPERSET_LABELS[ex.name] || ['A', 'B'];
-    inputs = h('div', { class: 'superset-inputs' },
-      kgInput('input-superset', labels[0], row.weight || '', exIdx, seriesIdx, 'weight'),
-      h('span', { class: 'superset-plus' }, '+'),
-      kgInput('input-superset', labels[1], row.weight2 || '', exIdx, seriesIdx, 'weight2'),
-    );
-  } else {
-    inputs = kgInput('input-kg', 'kg', row.weight || '', exIdx, seriesIdx, 'weight');
-  }
+  const inputs = h('div', { class: superset ? 'superset-inputs' : 'series-inputs' });
+  fields.forEach((f, i) => {
+    if (i > 0) inputs.append(h('span', { class: 'superset-plus' }, superset ? '+' : '×'));
+    const cls = superset ? 'input-superset' : (f.unit === 'kg' ? 'input-kg' : 'input-reps');
+    inputs.append(valueInput(cls, f, row[f.key], prevRow[f.key], exIdx, seriesIdx));
+  });
 
   let timer = null;
   if (s.rest > 0) {
@@ -102,7 +119,11 @@ function buildSeriesRow(ex, exIdx, s, seriesIdx, data, timers) {
       : buildTimerButton(key, s.rest);
   }
 
-  return h('div', { class: 'series-block' + (s.drop ? ' drop' : '') },
+  const previousText = formatPrevious(prev, fields);
+  return h('div', {
+    class: 'series-block' + (s.drop ? ' drop' : '') + (row.done ? ' done' : ''),
+    title: previousText ? `anterior: ${previousText}` : null,
+  },
     h('div', { class: 'series-number' }, String(seriesIdx + 1)),
     h('div', { class: 'series-reps' }, s.reps + ' reps'),
     inputs,
@@ -157,22 +178,11 @@ export function setTimerPausedIcon(el, paused) {
   if (btn) btn.textContent = paused ? '▶' : '⏸';
 }
 
-// ==================== SUMMARY ====================
-export function formatSeriesLine(s, i) {
-  return `Serie ${i + 1}: ${s.reps} reps${s.weight ? ` @ ${s.weight}kg` : ''}${s.weight2 ? ` + ${s.weight2}kg` : ''}`;
-}
-
-export function buildSummaryText(sessionName, exercisesData, dateLabel) {
-  const lines = [`📅 ${dateLabel} — ${sessionName}`, ''];
-  exercisesData.forEach(ex => {
-    lines.push(`▸ ${ex.name}`);
-    ex.series.forEach((s, i) => lines.push('  ' + formatSeriesLine(s, i)));
-    lines.push('');
-  });
-  return `[GUARDAR SESIÓN]\n${lines.join('\n')}`;
-}
-
 // ==================== HISTORY ====================
+export function formatDate(ts) {
+  return new Date(ts).toLocaleDateString('es-ES');
+}
+
 export function renderHistory(container, sessions, expandedIds) {
   if (sessions.length === 0) {
     container.replaceChildren(h('div', { class: 'empty-state' },
@@ -183,29 +193,70 @@ export function renderHistory(container, sessions, expandedIds) {
     return;
   }
 
-  const sorted = [...sessions].sort((a, b) => b.timestamp - a.timestamp);
+  const sorted = [...sessions].sort((a, b) => b.startedAt - a.startedAt);
   container.replaceChildren(...sorted.map(session => {
-    const id = String(session.id);
-    const expanded = expandedIds.some(x => String(x) === id);
-    const exercises = Array.isArray(session.exercises) ? session.exercises : [];
-    return h('div', { class: 'session-card' + (expanded ? ' expanded' : '') },
+    const id = session.id;
+    const expanded = expandedIds.includes(id);
+    return h('div', { class: 'session-card' + (expanded ? ' expanded' : ''), dataset: { id } },
       h('div', { class: 'session-header', dataset: { action: 'toggle-expand', id } },
         h('div', { class: 'session-info' },
-          h('div', { class: 'session-title' }, String(session.session ?? '')),
-          h('div', { class: 'session-date' }, String(session.date ?? '')),
+          h('div', { class: 'session-title' }, session.name),
+          h('div', { class: 'session-date' }, formatDate(session.startedAt)),
         ),
         h('div', { class: 'session-actions' },
-          h('button', { class: 'btn-delete', title: 'Borrar sesión', dataset: { action: 'delete-session', id } }, '🗑'),
-          h('button', { class: 'btn-expand' }, '▼'),
+          h('button', { class: 'btn-delete', title: 'Borrar sesión', 'aria-label': 'Borrar sesión', dataset: { action: 'delete-session', id } }, '🗑'),
+          h('button', { class: 'btn-expand', 'aria-label': 'Ver detalle' }, '▼'),
         ),
       ),
       h('div', { class: 'session-details' },
-        exercises.map(ex => h('div', { class: 'exercise-item' },
-          h('div', { class: 'exercise-name' }, String(ex?.name ?? '')),
-          (Array.isArray(ex?.series) ? ex.series : []).map((s, i) =>
-            h('div', { class: 'series-line' }, formatSeriesLine(s || {}, i))),
-        )),
+        session.notes ? h('div', { class: 'session-notes' }, session.notes) : null,
+        session.exercises.map(ex => {
+          const fields = fieldsForExerciseId(ex.id);
+          return h('div', { class: 'exercise-item' },
+            h('div', { class: 'exercise-name' }, ex.name),
+            ex.notes ? h('div', { class: 'exercise-notes' }, ex.notes) : null,
+            ex.series.map((s, i) => h('div', { class: 'series-line' }, formatSeriesLine(s, i, fields))),
+          );
+        }),
       ),
     );
   }));
+}
+
+// ==================== IMPORT ====================
+// preview: resultado de parseImport. Todo lo que viene del fichero entra como texto.
+export function renderImportPreview(container, preview) {
+  if (!preview) {
+    container.replaceChildren();
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+  if (!preview.ok) {
+    container.replaceChildren(
+      h('div', { class: 'import-title error' }, 'No se puede importar'),
+      h('div', { class: 'import-line' }, preview.error),
+      h('button', { class: 'btn btn-secondary mt-10', dataset: { action: 'import-cancel' } }, 'Cerrar'),
+    );
+    return;
+  }
+  const list = [...preview.fresh].sort((a, b) => b.startedAt - a.startedAt);
+  const shown = list.slice(0, 10);
+  container.replaceChildren(
+    h('div', { class: 'import-title' }, 'Vista previa de la importación'),
+    h('div', { class: 'import-line' }, `${preview.sessions.length} sesiones válidas en el fichero (formato ${preview.format})`),
+    h('div', { class: 'import-line' }, `${preview.fresh.length} nuevas se añadirán`),
+    h('div', { class: 'import-line' }, `${preview.duplicates} ya existen y se conservan como están`),
+    preview.rejected.length
+      ? h('div', { class: 'import-line warn' }, `${preview.rejected.length} rechazadas por datos inválidos`)
+      : null,
+    shown.length ? h('ul', { class: 'import-list' },
+      shown.map(s => h('li', {}, `${formatDate(s.startedAt)} — ${s.name}`)),
+      list.length > shown.length ? h('li', {}, `… y ${list.length - shown.length} más`) : null,
+    ) : null,
+    h('div', { class: 'import-actions' },
+      h('button', { class: 'btn btn-primary', dataset: { action: 'import-confirm' }, disabled: preview.fresh.length === 0 }, 'Importar'),
+      h('button', { class: 'btn btn-secondary', dataset: { action: 'import-cancel' } }, 'Cancelar'),
+    ),
+  );
 }
