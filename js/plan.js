@@ -105,7 +105,7 @@ export const BADGE = {
   circuit:     { label: 'Circuito' },
 };
 
-const clone = v => JSON.parse(JSON.stringify(v));
+export const clone = v => JSON.parse(JSON.stringify(v));
 
 // Convierte la forma antigua (ejercicios completos dentro de cada sesión) en biblioteca + rutinas.
 function fromLegacy(list) {

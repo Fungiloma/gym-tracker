@@ -2,7 +2,7 @@
 import { h } from './views.js';
 import { THEMES, SETTINGS_LIMITS } from './data.js';
 import { formatRest } from './timers.js';
-import { kgToDisplay, inputToKg, lbToKg, unitLabel, getUnit } from './units.js';
+import { kgToDisplay, inputToKg, lbToKg, unitLabel, getUnit, parseDecimal } from './units.js';
 import { DEFAULT_BAR, DEFAULT_PLATES, plateBreakdown } from './progress.js';
 
 const THEME_LABEL = { auto: 'Sistema', dark: 'Oscuro', light: 'Claro' };
@@ -100,8 +100,8 @@ export function renderPlates(container, ctx) {
 export function readPlatesForm(root = document) {
   const val = id => (root.getElementById ? root.getElementById(id) : root.querySelector('#' + id)).value;
   const parse = raw => {
-    const t = String(raw).trim().replace(',', '.');
-    return /^(\d+(\.\d*)?|\.\d+)$/.test(t) && Number(t) > 0 ? inputToKg(Number(t)) : null;
+    const n = parseDecimal(raw);
+    return n !== null && n > 0 ? inputToKg(n) : null;
   };
   const total = String(val('plates-total')).trim() === '' ? null : parse(val('plates-total'));
   const bar = parse(val('plates-bar'));

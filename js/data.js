@@ -10,7 +10,7 @@
 // Validación estricta para lo que dice ser v2 (se rechaza la sesión entera si algo no
 // cuadra) y lector tolerante para la v1 (se convierte lo que se pueda).
 import { getPlanSession, findPlanSessionByName, findPlanExercise, findLibraryExerciseByName, fieldsFor, planRevision } from './plan.js';
-import { kgToDisplay, unitLabel } from './units.js';
+import { kgToDisplay, unitLabel, parseDecimal } from './units.js';
 
 export const SCHEMA_VERSION = 2;
 export const SERIES_TYPES = ['normal', 'warmup', 'drop', 'failure'];
@@ -160,11 +160,9 @@ export function parseValue(key, raw) {
   if (raw === null || raw === undefined) return { ok: true, value: null };
   if (typeof raw === 'number') return inRange(key, raw) ? { ok: true, value: raw } : { ok: false, value: null };
   if (typeof raw !== 'string') return { ok: false, value: null };
-  const t = raw.trim().replace(',', '.');
-  if (t === '') return { ok: true, value: null };
-  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return { ok: false, value: null };
-  const n = Number(t);
-  return inRange(key, n) ? { ok: true, value: n } : { ok: false, value: null };
+  if (raw.trim() === '') return { ok: true, value: null };
+  const n = parseDecimal(raw);
+  return n !== null && inRange(key, n) ? { ok: true, value: n } : { ok: false, value: null };
 }
 
 export function hasValues(series) {
@@ -301,9 +299,9 @@ export function parseBodyInput(date, raws) {
   for (const f of BODY_FIELDS) {
     const raw = raws && raws[f.key];
     if (raw === undefined || raw === null || String(raw).trim() === '') { out[f.key] = null; continue; }
-    const t = String(raw).trim().replace(',', '.');
-    if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return { ok: false, error: `${f.label}: valor no válido` };
-    out[f.key] = Number(t);
+    const n = parseDecimal(raw);
+    if (n === null) return { ok: false, error: `${f.label}: valor no válido` };
+    out[f.key] = n;
   }
   const r = validateBodyEntry(out);
   return r.ok ? r : { ok: false, error: r.error.replace(/^medida: /, '') };

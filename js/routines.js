@@ -7,7 +7,7 @@
 //  - Un ejercicio o rutina con historial (o en la sesión en curso) no se borra: se archiva.
 //  - No se borra ni archiva un ejercicio que use una rutina activa; antes hay que quitarlo de ella.
 //  - Importar un plan sustituye rutinas y biblioteca, pero lo usado por el historial se conserva archivado.
-import { PLAN_VERSION, BADGE, MUSCLES, defaultPlan } from './plan.js';
+import { PLAN_VERSION, BADGE, MUSCLES, defaultPlan, clone } from './plan.js';
 import { isPlainObject, isId, slugId, newId, LIMITS, MAX_REST } from './data.js';
 
 export const PLAN_LIMITS = {
@@ -252,8 +252,6 @@ export function resetToDefault(current, used) {
 }
 
 // ==================== EDITOR ====================
-const clone = v => JSON.parse(JSON.stringify(v));
-
 function commit(plan) {
   return validatePlan(plan);
 }
