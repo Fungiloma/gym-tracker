@@ -6,10 +6,12 @@
 //                     ha editado o importado. Sin él se usa el plan por defecto de plan.js.
 // Las claves v1 (gymtracker.sessions/state y gym-sessions/state) solo se leen, nunca se
 // escriben ni se borran. Si gymtracker.data está dañado, se copia tal cual a
-// gymtracker.data.backup antes de que nada lo pueda sobrescribir (igual con gymtracker.plan).
+// gymtracker.data.backup antes de que nada lo pueda sobrescribir (igual con gymtracker.plan). Si esa
+// copia no se puede escribir (almacenamiento lleno) o los datos son de una versión más nueva, loadData
+// lo indica y la app no debe sobrescribir gymtracker.data (ver needsWriteLock).
 import { defaultPlan } from './plan.js';
 import { validatePlan } from './routines.js';
-import { emptyData, tryValidateData, fromV1Sessions, restoreDraft, isPlainObject, isId, MAX_REST } from './data.js';
+import { emptyData, tryValidateData, fromV1Sessions, restoreDraft, isPlainObject, isId, MAX_REST, SCHEMA_VERSION } from './data.js';
 import { sanitizeTimer } from './timers.js';
 
 export const KEYS = {
@@ -17,6 +19,7 @@ export const KEYS = {
   draft: 'gymtracker.draft',
   ui: 'gymtracker.ui',
   backup: 'gymtracker.data.backup',
+  draftBackup: 'gymtracker.draft.backup',
   plan: 'gymtracker.plan',
   planBackup: 'gymtracker.plan.backup',
 };
@@ -59,11 +62,14 @@ function put(storage, key, value) {
   }
 }
 
+// 'ok' | 'failed'
 function backupRaw(storage, raw) {
-  put(storage, KEYS.backup, raw);
+  return put(storage, KEYS.backup, raw).ok ? 'ok' : 'failed';
 }
 
-// Devuelve { data, source, rejected } con source: 'v2' | 'v1' | 'empty' | 'corrupt'.
+// Devuelve { data, source, rejected, backup }.
+//   source: 'v2' | 'v1' | 'empty' | 'corrupt' | 'newer' (schemaVersion mayor que la de esta app)
+//   backup: 'none' (no hacía falta copia) | 'ok' | 'failed' (copia en gymtracker.data.backup)
 export function loadData(storage = defaultStorage()) {
   const raw = get(storage, KEYS.data);
   if (raw !== null) {
@@ -71,29 +77,42 @@ export function loadData(storage = defaultStorage()) {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      backupRaw(storage, raw);
-      return { data: emptyData(), source: 'corrupt', rejected: [] };
+      return { data: emptyData(), source: 'corrupt', rejected: [], backup: backupRaw(storage, raw) };
+    }
+    if (isPlainObject(parsed) && typeof parsed.schemaVersion === 'number' && parsed.schemaVersion > SCHEMA_VERSION) {
+      return { data: emptyData(), source: 'newer', rejected: [], backup: backupRaw(storage, raw) };
     }
     const r = tryValidateData(parsed);
     if (!r.ok) {
-      backupRaw(storage, raw);
-      return { data: emptyData(), source: 'corrupt', rejected: [{ index: -1, error: r.error }] };
+      return { data: emptyData(), source: 'corrupt', rejected: [{ index: -1, error: r.error }], backup: backupRaw(storage, raw) };
     }
-    if (r.rejected.length) backupRaw(storage, raw);
-    return { data: r.data, source: 'v2', rejected: r.rejected };
+    return { data: r.data, source: 'v2', rejected: r.rejected, backup: r.rejected.length ? backupRaw(storage, raw) : 'none' };
   }
 
   let v1raw = get(storage, V1_KEYS.sessions);
   if (v1raw === null) v1raw = get(storage, LEGACY_KEYS.sessions);
-  if (v1raw === null) return { data: emptyData(), source: 'empty', rejected: [] };
+  if (v1raw === null) return { data: emptyData(), source: 'empty', rejected: [], backup: 'none' };
   let parsed;
   try {
     parsed = JSON.parse(v1raw);
   } catch {
-    return { data: emptyData(), source: 'empty', rejected: [{ index: -1, error: 'v1 ilegible' }] };
+    return { data: emptyData(), source: 'empty', rejected: [{ index: -1, error: 'v1 ilegible' }], backup: 'none' };
   }
+  // Las claves v1 nunca se escriben ni se borran: siguen siendo la copia.
   const { sessions, rejected } = fromV1Sessions(parsed);
-  return { data: { ...emptyData(), sessions }, source: 'v1', rejected };
+  return { data: { ...emptyData(), sessions }, source: 'v1', rejected, backup: 'none' };
+}
+
+// Si es true, guardar ahora sobrescribiría datos que no están a salvo en ningún otro sitio
+// (o que son de una versión más nueva de la app): gymtracker.data no se debe escribir hasta que
+// el usuario los descargue o decida descartarlos.
+export function needsWriteLock(loaded) {
+  return !!loaded && (loaded.source === 'newer' || loaded.backup === 'failed');
+}
+
+// Texto guardado tal cual en gymtracker.data (para descargarlo sin interpretarlo). null si no hay.
+export function readRawData(storage = defaultStorage()) {
+  return get(storage, KEYS.data);
 }
 
 export function saveData(data, storage = defaultStorage()) {
@@ -121,14 +140,23 @@ export function savePlan(plan, storage = defaultStorage()) {
   return put(storage, KEYS.plan, JSON.stringify(plan));
 }
 
-export function loadDraft(storage = defaultStorage()) {
+// { draft, lost, backup }: lost = había un borrador guardado que no se pudo reconstruir; entonces se
+// copia tal cual a gymtracker.draft.backup (backup 'ok' | 'failed') antes de que una sesión nueva lo pise.
+export function loadDraftState(storage = defaultStorage()) {
   const raw = get(storage, KEYS.draft);
-  if (raw === null) return null;
+  if (raw === null) return { draft: null, lost: false, backup: 'none' };
+  let draft = null;
   try {
-    return restoreDraft(JSON.parse(raw));
+    draft = restoreDraft(JSON.parse(raw));
   } catch {
-    return null;
+    draft = null;
   }
+  if (draft) return { draft, lost: false, backup: 'none' };
+  return { draft: null, lost: true, backup: put(storage, KEYS.draftBackup, raw).ok ? 'ok' : 'failed' };
+}
+
+export function loadDraft(storage = defaultStorage()) {
+  return loadDraftState(storage).draft;
 }
 
 export function saveDraft(draft, storage = defaultStorage()) {

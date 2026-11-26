@@ -129,22 +129,25 @@ async function updateScenario(browser, url) {
   await page.waitForSelector('.session-btn');
   await swControlling(page);
   assert.equal(await page.locator('#update-banner').isVisible(), false, 'sin aviso en la primera instalación');
-  // Caché antigua de la versión 5 que debe desaparecer al activar.
-  await page.evaluate(() => caches.open('gym-tracker-v5'));
+  // La versión actual sale de sw.js; se simula la siguiente y una caché antigua que debe desaparecer.
   const swPath = join(updRoot, 'sw.js');
-  writeFileSync(swPath, readFileSync(swPath, 'utf8').replace("const CACHE_VERSION = 'v6'", "const CACHE_VERSION = 'v7'"));
+  const swText = readFileSync(swPath, 'utf8');
+  const current = Number(/const CACHE_VERSION = 'v(\d+)'/.exec(swText)[1]);
+  const [old, cur, next] = [current - 1, current, current + 1].map(n => `gym-tracker-v${n}`);
+  await page.evaluate(name => caches.open(name), old);
+  writeFileSync(swPath, swText.replace(`const CACHE_VERSION = 'v${current}'`, `const CACHE_VERSION = 'v${current + 1}'`));
   await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration()).update(); });
   await page.waitForSelector('#update-banner:not([hidden])', { timeout: 10000 });
   assert.match(await page.locator('#update-banner').textContent(), /Nueva versión disponible/);
   const before = Object.keys(await cacheState(page));
-  assert.ok(before.includes('gym-tracker-v6'), 'la versión actual sigue activa hasta recargar');
+  assert.ok(before.includes(cur), 'la versión actual sigue activa hasta recargar');
   const nav = page.waitForNavigation({ waitUntil: 'load' });
   await page.locator('#update-reload').click();
   await nav;
   await page.waitForSelector('.session-btn');
-  await page.waitForFunction(async () => (await caches.keys()).join() === 'gym-tracker-v7', null, { timeout: 10000 });
+  await page.waitForFunction(async n => (await caches.keys()).join() === n, next, { timeout: 10000 });
   await context.close();
-  console.log('e2e offline actualización: ok (aviso, recarga y limpieza de gym-tracker-v5 y v6)');
+  console.log('e2e offline actualización: ok (aviso, recarga y limpieza de las cachés anteriores)');
 }
 
 let browser;

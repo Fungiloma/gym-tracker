@@ -2,6 +2,12 @@
 
 Cambios por fase del plan de auditoría ([docs/PLAN-AUDITORIA.md](docs/PLAN-AUDITORIA.md)). El historial de commits es la fuente definitiva.
 
+## Correcciones de la revisión de código
+
+- Datos guardados dañados o de una versión más nueva: si no se puede hacer la copia en `gymtracker.data.backup` (almacenamiento lleno) o los datos son de una versión más nueva, el historial deja de guardarse hasta que el usuario los descarga tal cual o decide empezar de cero desde un aviso en Inicio. Antes el siguiente guardado borraba todo el historial.
+- Borrados seguidos de sesiones o medidas comparten un único Deshacer que los recupera todos (un doble toque en 🗑 borraba dos y solo se podía recuperar una).
+- La sesión en curso guarda el nombre de su rutina: si la rutina desaparece del plan (plan dañado), el borrador se conserva y se puede terminar con ese nombre. Un borrador que no se puede reconstruir se copia a `gymtracker.draft.backup`.
+
 ## Fase 9. Documentación y gobierno
 
 - README reescrito con las funciones reales, copias de seguridad de historial y de plan por separado, y lo que la app no hace.

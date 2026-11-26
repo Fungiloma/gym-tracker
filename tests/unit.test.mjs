@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { planSessions, getPlanSession, fieldsFor, findPlanExercise } from '../js/plan.js';
 const PLAN = planSessions();
 import {
-  KEYS, V1_KEYS, LEGACY_KEYS, loadData, saveData, loadDraft, saveDraft, clearDraft, loadUi, saveUi,
+  KEYS, V1_KEYS, LEGACY_KEYS, loadData, saveData, loadDraft, loadDraftState, saveDraft, clearDraft, loadUi, saveUi,
+  needsWriteLock, readRawData,
 } from '../js/storage.js';
 import {
   formatRest, formatRemaining, ringOffset, remainingAt, createTimer, toggleTimer, adjustTimer, sanitizeTimer, formatElapsed, RING_CIRCUMFERENCE,
@@ -76,7 +77,37 @@ test('loadData: datos dañados se copian a backup y no se pierden', () => {
   assert.ok(st2.dump()[KEYS.backup], 'sesiones rechazadas: se guarda copia');
 
   assert.equal(loadData(memoryStorage({ [KEYS.data]: '[]' })).source, 'corrupt');
-  assert.equal(loadData(memoryStorage({ [KEYS.data]: '{"schemaVersion":3,"sessions":[]}' })).source, 'corrupt');
+  assert.equal(r.backup, 'ok');
+  assert.equal(needsWriteLock(r), false, 'con copia hecha se puede seguir guardando');
+});
+
+test('loadData: sin espacio para la copia, los datos dañados no se deben sobrescribir', () => {
+  // Cuota llena: el setItem de la copia falla. Antes la app seguía y el siguiente guardado borraba el historial.
+  const corrupt = loadData(memoryStorage({ [KEYS.data]: '{no json' }, { quota: true }));
+  assert.equal(corrupt.source, 'corrupt');
+  assert.equal(corrupt.backup, 'failed');
+  assert.equal(needsWriteLock(corrupt), true);
+
+  const rejected = loadData(memoryStorage({ [KEYS.data]: '{"schemaVersion":2,"sessions":[{"id":"x"}]}' }, { quota: true }));
+  assert.equal(rejected.source, 'v2');
+  assert.equal(rejected.backup, 'failed');
+  assert.equal(needsWriteLock(rejected), true, 'los registros rechazados se perderían al guardar');
+
+  assert.equal(needsWriteLock(loadData(memoryStorage())), false);
+  assert.equal(needsWriteLock(loadData(memoryStorage({ [KEYS.data]: '{"schemaVersion":2,"sessions":[]}' }, { quota: true }))), false, 'datos válidos: no hace falta copia');
+});
+
+test('loadData: datos de una versión más nueva se copian y no se sobrescriben', () => {
+  const raw = '{"schemaVersion":3,"sessions":[{"id":"futuro"}]}';
+  const st = memoryStorage({ [KEYS.data]: raw });
+  const r = loadData(st);
+  assert.equal(r.source, 'newer');
+  assert.deepEqual(r.data.sessions, []);
+  assert.equal(r.backup, 'ok');
+  assert.equal(st.dump()[KEYS.backup], raw);
+  assert.equal(needsWriteLock(r), true, 'aunque haya copia: guardar degradaría los datos nuevos');
+  assert.equal(readRawData(st), raw, 'el texto se puede descargar tal cual');
+  assert.equal(readRawData(memoryStorage()), null);
 });
 
 test('saveData escribe solo la clave v2, no toca las v1 e informa de cuota llena', () => {
@@ -102,6 +133,20 @@ test('borrador: guardar, recargar, ignorar basura y borrar', () => {
   assert.equal(loadDraft(st), null);
   assert.equal(loadDraft(memoryStorage({ [KEYS.draft]: '{bad' })), null);
   assert.equal(loadDraft(memoryStorage({ [KEYS.draft]: '{"planSessionId":"nope"}' })), null);
+});
+
+test('borrador irrecuperable: se copia a gymtracker.draft.backup antes de que una sesión nueva lo pise', () => {
+  const st = memoryStorage({ [KEYS.draft]: '{bad' });
+  assert.deepEqual(loadDraftState(st), { draft: null, lost: true, backup: 'ok' });
+  assert.equal(st.dump()[KEYS.draftBackup], '{bad');
+  assert.deepEqual(loadDraftState(memoryStorage({ [KEYS.draft]: '{bad' }, { quota: true })), { draft: null, lost: true, backup: 'failed' });
+  assert.deepEqual(loadDraftState(memoryStorage()), { draft: null, lost: false, backup: 'none' });
+  const ok = memoryStorage();
+  saveDraft(createDraft(P1.id, Date.UTC(2026, 0, 1)), ok);
+  const r = loadDraftState(ok);
+  assert.equal(r.lost, false);
+  assert.equal(r.draft.planSessionId, P1.id);
+  assert.equal(ok.dump()[KEYS.draftBackup], undefined);
 });
 
 test('estado de UI separado: ids de texto, descanso y descansos por ejercicio validados', () => {

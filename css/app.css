@@ -1002,6 +1002,8 @@ header .header-subtitle {
 .suggest-apply { margin-top: 8px; }
 
 .notice { border: 1px solid var(--warning); border-radius: 12px; background: var(--bg-secondary); padding: 10px 12px; font-size: 13px; line-height: 1.45; margin-bottom: 10px; }
+.notice-error { border-color: var(--danger); }
+.notice-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .setting-row:last-of-type { border-bottom: none; }

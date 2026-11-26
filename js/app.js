@@ -6,7 +6,7 @@ import {
   buildExport, parseImport, mergeSessions, mergeBody, toCSV, hasValues, parseBodyInput, upsertBody, isDateKey,
   toggleSeriesDone, fillSeries, addSeries, removeLastSeries, insertSeries, moveExercise,
   substituteExercise, setNote, defaultRest, restForSeries, MAX_REST,
-  getSettings, applySetting, fieldsForExerciseId,
+  getSettings, applySetting, fieldsForExerciseId, draftName,
 } from './data.js';
 import { setUnit, getUnit, unitLabel, inputToKg, kgToDisplay, progressionStepKg } from './units.js';
 import { registerServiceWorker, shortcutIndex, hasShortcutParam } from './pwa.js';
@@ -49,6 +49,9 @@ let lastSummary = null;
 let platesPrefill = null;
 let sharePreviewUrl = null;
 let currentScreen = 'home';
+// Bloqueo de escritura del historial: { reason: 'corrupt' | 'rejected' | 'newer' } cuando guardar ahora
+// destruiría datos que no están a salvo en otro sitio (ver storage.needsWriteLock). null = se guarda normal.
+let dataLock = null;
 // Editor del plan (no se guarda): rutina abierta, ejercicio desplegado en la biblioteca e import pendiente.
 let editingRoutine = null;
 let editingExercise = null;
@@ -288,7 +291,55 @@ function resetPlan() {
 }
 
 function renderHomeNotices() {
-  renderNotices($('home-notices'), settings().progression ? deloadNotices(data.sessions) : []);
+  const box = $('home-notices');
+  renderNotices(box, settings().progression ? deloadNotices(data.sessions) : []);
+  if (dataLock) box.prepend(dataLockNotice());
+}
+
+// ==================== DATOS GUARDADOS SIN RECUPERAR ====================
+const LOCK_TEXT = {
+  corrupt: 'Tus datos guardados están dañados y no había espacio para guardar una copia. Para no perderlos, el historial no se guarda hasta que los descargues o decidas empezar de cero. La sesión en curso se conserva.',
+  rejected: 'Algunos registros guardados no son válidos y no había espacio para guardar una copia. Para no perderlos, el historial no se guarda hasta que los descargues o decidas continuar sin ellos. La sesión en curso se conserva.',
+  newer: 'Tus datos guardados son de una versión más nueva de la app. Actualízala (recarga con conexión); mientras tanto el historial no se guarda para no estropearlos.',
+};
+
+function dataLockNotice() {
+  return h('div', { class: 'notice notice-error', role: 'alert', id: 'data-lock-notice' },
+    h('div', {}, LOCK_TEXT[dataLock.reason]),
+    h('div', { class: 'notice-actions' },
+      h('button', { class: 'btn btn-secondary', dataset: { action: 'data-lock-download' } }, 'Descargar datos guardados'),
+      h('button', { class: 'btn btn-secondary', dataset: { action: 'data-lock-release' } },
+        dataLock.reason === 'rejected' ? 'Continuar sin esos registros' : 'Empezar de cero'),
+    ),
+  );
+}
+
+// Descarga el texto guardado tal cual, sin interpretarlo, para poder recuperarlo después.
+function downloadLockedData() {
+  const raw = storage.readRawData();
+  if (raw === null) {
+    toast('No hay datos guardados que descargar.', 'error');
+    return;
+  }
+  const file = new File([raw], `gym-tracker-recuperacion-${stamp()}.json`, { type: 'application/json' });
+  const url = URL.createObjectURL(file);
+  const a = h('a', { href: url, download: file.name });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('Datos guardados descargados');
+}
+
+function releaseDataLock() {
+  if (!dataLock) return;
+  const msg = dataLock.reason === 'rejected'
+    ? '¿Continuar sin los registros que no se pudieron leer? Se perderán en cuanto se guarde el historial. Descárgalos antes si quieres conservarlos.'
+    : '¿Empezar de cero? Los datos guardados se sustituirán en cuanto se guarde el historial. Descárgalos antes si quieres conservarlos.';
+  if (!confirm(msg)) return;
+  dataLock = null;
+  renderHomeNotices();
+  toast('El historial vuelve a guardarse');
 }
 
 // ==================== AVISOS ====================
@@ -330,7 +381,13 @@ function reportSave(result, what) {
   return false;
 }
 
-const saveData = () => reportSave(storage.saveData(data), 'el historial');
+function saveData() {
+  if (dataLock) {
+    toast('El historial no se guarda mientras haya datos guardados sin recuperar. Mira el aviso en Inicio.', 'error');
+    return false;
+  }
+  return reportSave(storage.saveData(data), 'el historial');
+}
 const saveDraft = () => (draft ? reportSave(storage.saveDraft(draft), 'la sesión en curso') : true);
 const saveUi = () => storage.saveUi(ui);
 
@@ -403,8 +460,7 @@ function startSession(planId) {
       resumeSession();
       return;
     }
-    const current = getPlanSession(draft.planSessionId);
-    if (!confirm(`Tienes una sesión en curso (${current ? current.name : 'sin nombre'}). ¿Descartarla y empezar ${plan.name}?`)) return;
+    if (!confirm(`Tienes una sesión en curso (${draftName(draft)}). ¿Descartarla y empezar ${plan.name}?`)) return;
   }
   draft = createDraft(planId);
   ui.guidedIndex = 0;
@@ -435,8 +491,7 @@ function guidedIndex() {
 }
 
 function showSession() {
-  const plan = getPlanSession(draft.planSessionId);
-  $('session-header-title').textContent = plan.name;
+  $('session-header-title').textContent = draftName(draft);
   renderSessionView();
   renderRestBar($('rest-bar'), ui.timer);
 }
@@ -910,6 +965,14 @@ function saveBody() {
   toast('Medida guardada');
 }
 
+// Borrados seguidos del mismo tipo comparten un único Deshacer que los recupera todos: un doble toque
+// sobre 🗑 (el segundo cae en la tarjeta siguiente, que sube a su sitio) no deja nada sin recuperar.
+function pendingUndoItems(group) {
+  return toastUndo && toastUndo.group === group ? toastUndo.items : [];
+}
+
+const plural = (n, one, many) => (n === 1 ? one : `${n} ${many}`);
+
 function deleteBody(date) {
   const index = data.body.findIndex(b => b.date === date);
   if (index < 0) return;
@@ -921,26 +984,29 @@ function deleteBody(date) {
     return;
   }
   renderHistoryScreen();
-  toast('Medida borrada', 'info', {
-    label: 'Deshacer',
-    run: () => {
-      if (data.body.some(b => b.date === date)) return;
-      const previous = data.body;
-      data.body = upsertBody(data.body, removed);
-      if (!saveData()) {
-        data.body = previous;
-        return;
-      }
-      renderHistoryScreen();
-      toast('Medida recuperada');
-    },
+  const items = [...pendingUndoItems('body'), removed];
+  toast(plural(items.length, 'Medida borrada', 'medidas borradas'), 'info', {
+    label: 'Deshacer', group: 'body', items, run: () => restoreBody(items),
   });
 }
 
+function restoreBody(items) {
+  const missing = items.filter(e => !data.body.some(b => b.date === e.date));
+  if (!missing.length) return;
+  const previous = data.body;
+  data.body = missing.reduce((body, e) => upsertBody(body, e), data.body);
+  if (!saveData()) {
+    data.body = previous;
+    return;
+  }
+  renderHistoryScreen();
+  toast(plural(missing.length, 'Medida recuperada', 'medidas recuperadas'));
+}
+
 function deleteSession(id) {
-  if (!data.sessions.some(s => s.id === id)) return;
+  const index = data.sessions.findIndex(s => s.id === id);
+  if (index < 0) return;
   const before = data.sessions;
-  const index = before.findIndex(s => s.id === id);
   const removed = before[index];
   data.sessions = before.filter(s => s.id !== id);
   if (!saveData()) {
@@ -950,22 +1016,30 @@ function deleteSession(id) {
   ui.expandedSessions = ui.expandedSessions.filter(x => x !== id);
   saveUi();
   renderHistoryScreen();
-  toast('Sesión borrada', 'info', {
-    label: 'Deshacer',
-    run: () => {
-      if (data.sessions.some(s => s.id === id)) return;
-      const next = [...data.sessions];
-      next.splice(Math.min(index, next.length), 0, removed);
-      const previous = data.sessions;
-      data.sessions = next;
-      if (!saveData()) {
-        data.sessions = previous;
-        return;
-      }
-      renderHistoryScreen();
-      toast('Sesión recuperada');
-    },
+  const items = [...pendingUndoItems('sessions'), { index, session: removed }];
+  toast(plural(items.length, 'Sesión borrada', 'sesiones borradas'), 'info', {
+    label: 'Deshacer', group: 'sessions', items, run: () => restoreSessions(items),
   });
+}
+
+// Se reinsertan en orden inverso al borrado: cada índice se tomó con las anteriores ya fuera.
+function restoreSessions(items) {
+  const next = [...data.sessions];
+  let restored = 0;
+  for (const { index, session } of [...items].reverse()) {
+    if (next.some(s => s.id === session.id)) continue;
+    next.splice(Math.min(index, next.length), 0, session);
+    restored += 1;
+  }
+  if (!restored) return;
+  const previous = data.sessions;
+  data.sessions = next;
+  if (!saveData()) {
+    data.sessions = previous;
+    return;
+  }
+  renderHistoryScreen();
+  toast(plural(restored, 'Sesión recuperada', 'sesiones recuperadas'));
 }
 
 function toggleExpandSession(id) {
@@ -1282,6 +1356,8 @@ const ACTIONS = {
   'plan-import-confirm': () => confirmPlanImport(),
   'plan-import-cancel': () => cancelPlanImport(),
   'plan-reset': () => resetPlan(),
+  'data-lock-download': () => downloadLockedData(),
+  'data-lock-release': () => releaseDataLock(),
 };
 
 function initEvents() {
@@ -1392,18 +1468,36 @@ function init() {
   setActivePlan(plan.plan);
   const loaded = storage.loadData();
   data = loaded.data;
-  if (loaded.source === 'corrupt') {
-    toast('Los datos guardados estaban dañados. Se ha guardado una copia en gymtracker.data.backup.', 'error');
+  // Los avisos de arranque se juntan en un solo toast (uno pisaría al otro).
+  const notes = [];
+  if (storage.needsWriteLock(loaded)) {
+    dataLock = { reason: loaded.source === 'newer' ? 'newer' : (loaded.source === 'corrupt' ? 'corrupt' : 'rejected') };
+    notes.push({
+      newer: 'Los datos guardados son de una versión más nueva de la app: no se guardarán cambios en el historial.',
+      corrupt: 'Los datos guardados no se pudieron leer y no se pudo hacer una copia: el historial no se guardará hasta que lo resuelvas en Inicio.',
+      rejected: `${loaded.rejected.length} registros guardados no son válidos y no se pudo hacer una copia: el historial no se guardará hasta que lo resuelvas en Inicio.`,
+    }[dataLock.reason]);
+  } else if (loaded.source === 'corrupt') {
+    notes.push('Los datos guardados estaban dañados. Se ha guardado una copia en gymtracker.data.backup.');
   } else if (loaded.rejected.length) {
-    toast(`${loaded.rejected.length} registros guardados no eran válidos y se han apartado.`, 'error');
+    notes.push(`${loaded.rejected.length} registros guardados no eran válidos y se han apartado (copia en gymtracker.data.backup).`);
   }
   if (loaded.source === 'v1') saveData();
   if (plan.source === 'corrupt') {
-    toast('El plan guardado estaba dañado. Se usa el plan original y se ha guardado una copia en gymtracker.plan.backup.', 'error');
+    notes.push('El plan guardado estaba dañado. Se usa el plan original y se ha guardado una copia en gymtracker.plan.backup.');
   }
 
   applyAppearance();
-  draft = storage.loadDraft();
+  const saved = storage.loadDraftState();
+  draft = saved.draft;
+  if (draft && !getPlanSession(draft.planSessionId)) {
+    notes.push(`La rutina de la sesión en curso ya no está en el plan. Puedes seguir y terminarla: se guardará como «${draftName(draft)}».`);
+  } else if (saved.lost) {
+    notes.push(saved.backup === 'ok'
+      ? 'No se pudo recuperar la sesión en curso. Se ha guardado una copia en gymtracker.draft.backup.'
+      : 'No se pudo recuperar la sesión en curso.');
+  }
+  if (notes.length) toast(notes.join(' '), 'error');
   ui = storage.loadUi(DEFAULT_UI);
   // Un descanso solo tiene sentido con sesión en curso; si ya terminó mientras la app estaba cerrada, se descarta.
   if (!draft || (ui.timer && !ui.timer.paused && remainingAt(ui.timer, Date.now()) <= 0)) {

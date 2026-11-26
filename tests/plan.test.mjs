@@ -11,7 +11,7 @@ import {
   addRoutineExercise, removeRoutineExercise, moveRoutineExercise, setRoutineNote, addRoutineSeries,
   removeRoutineSeries, setRoutineSeries, createExercise, updateExercise, removeExercise, restoreExercise,
 } from '../js/routines.js';
-import { createDraft, restoreDraft, finalizeDraft, substituteExercise, fieldsForExerciseId, GENERIC_FIELDS } from '../js/data.js';
+import { createDraft, restoreDraft, finalizeDraft, substituteExercise, fieldsForExerciseId, GENERIC_FIELDS, draftName } from '../js/data.js';
 import { loadPlan, savePlan, KEYS } from '../js/storage.js';
 
 afterEach(() => setActivePlan(defaultPlan()));
@@ -367,6 +367,44 @@ test('el borrador guardado sobrevive a editar o vaciar su rutina', () => {
   const back = restoreDraft(saved);
   assert.equal(back.exercises.length, 5);
   assert.equal(back.exercises[0].series[0].weight, 100);
+});
+
+test('borrador de una rutina que ya no está en el plan (plan dañado): se conserva y se puede terminar', () => {
+  const c = createRoutine(defaultPlan(), 'Mi rutina');
+  ok(c);
+  const withEx = ok(addRoutineExercise(c.plan, c.id, 'press-banca-mancuernas'));
+  setActivePlan(withEx);
+  const draft = createDraft(c.id, Date.UTC(2026, 0, 1, 18));
+  assert.equal(draft.name, 'Mi rutina');
+  draft.exercises[0].series[0].weight = 70;
+  draft.exercises[0].series[0].repsDone = 8;
+  const saved = JSON.parse(JSON.stringify(draft));
+
+  // El plan guardado se pierde y vuelve el original: la rutina ya no existe.
+  setActivePlan(defaultPlan());
+  const back = restoreDraft(saved);
+  assert.ok(back, 'antes devolvía null y el borrador se perdía');
+  assert.equal(back.id, draft.id);
+  assert.equal(back.planSessionId, c.id);
+  assert.equal(back.name, 'Mi rutina');
+  assert.equal(back.startedAt, draft.startedAt);
+  assert.equal(back.exercises[0].series[0].weight, 70);
+  assert.equal(back.exercises[0].series.length, 3);
+  assert.equal(draftName(back), 'Mi rutina');
+
+  const fin = finalizeDraft(back, Date.UTC(2026, 0, 1, 19));
+  assert.equal(fin.ok, true);
+  assert.equal(fin.session.name, 'Mi rutina');
+  assert.equal(fin.session.planSessionId, c.id, 'el historial queda enlazado si la rutina vuelve');
+  assert.equal(fin.session.exercises[0].series[0].weight, 70);
+
+  // Borradores anteriores a este cambio no guardaban el nombre.
+  delete saved.name;
+  assert.equal(draftName(restoreDraft(saved)), 'Sesión recuperada');
+  // Sin ejercicios reconstruibles no hay nada que conservar.
+  assert.equal(restoreDraft({ ...saved, exercises: [] }), null);
+  assert.equal(restoreDraft({ planSessionId: 'nope' }), null);
+  assert.equal(finalizeDraft({ planSessionId: '<x>', exercises: [] }).ok, false);
 });
 
 test('sustituir usa la biblioteca activa e incluye archivados (enlaza historial)', () => {

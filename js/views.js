@@ -2,7 +2,7 @@
 // con datos ni se interpolan identificadores en JS. Las acciones se declaran con
 // data-action y las resuelve la delegación de app.js.
 import { BADGE, getPlanSession, planSessions, libraryExercises, routineExercise } from './plan.js';
-import { draftStats, formatPrevious, formatPreviousShort, formatSeriesLine, fieldsForExerciseId } from './data.js';
+import { draftStats, formatPrevious, formatPreviousShort, formatSeriesLine, fieldsForExerciseId, draftName } from './data.js';
 import { sessionVolume, fmtKg } from './stats.js';
 import { formatRest, formatRemaining, ringOffset } from './timers.js';
 import { kgToDisplay, fmtWeightNum, unitLabel } from './units.js';
@@ -30,13 +30,14 @@ export function renderNotices(container, notices) {
 
 export function renderHome(container, draft) {
   const items = [];
+  // La tarjeta sale aunque la rutina ya no esté en el plan: el borrador se puede terminar igual.
   const current = draft && getPlanSession(draft.planSessionId);
-  if (current) {
+  if (draft) {
     const started = new Date(draft.startedAt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
     const { filled, total } = draftStats(draft);
     items.push(h('button', { class: 'resume-card', dataset: { action: 'resume-session' } },
       h('div', { class: 'resume-card-label' }, 'Sesión en curso'),
-      h('div', { class: 'resume-card-title' }, current.name),
+      h('div', { class: 'resume-card-title' }, draftName(draft)),
       h('div', { class: 'resume-card-info' }, `Empezada a las ${started} · ${filled}/${total} series apuntadas · Continuar ›`),
     ));
   }

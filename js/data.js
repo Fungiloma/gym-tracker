@@ -424,12 +424,14 @@ export function fromV1Sessions(list) {
 }
 
 // ==================== BORRADOR ====================
-// Draft   = { schemaVersion, id, planSessionId, startedAt, notes, exercises: DraftExercise[] }
+// Draft   = { schemaVersion, id, planSessionId, name, startedAt, notes, exercises: DraftExercise[] }
+//           name = nombre de la rutina al empezar; sirve si la rutina desaparece del plan (plan dañado).
 // DraftExercise = { id, name, notes, substituteFor|null, series: DraftSeries[] }
 // DraftSeries   = Series + rest (segundos de descanso tras la serie; 0 = sin descanso)
 // El borrador es autodescriptivo: se pueden añadir/quitar series, reordenar y sustituir
 // ejercicios sin que el índice siga alineado con el plan.
 export const MAX_REST = 3600;
+export const ORPHAN_DRAFT_NAME = 'Sesión recuperada';
 
 function blankSeries(planSerie) {
   return {
@@ -451,6 +453,7 @@ function baseDraft(planSessionId, now) {
     schemaVersion: SCHEMA_VERSION,
     id: newId(now),
     planSessionId: p.id,
+    name: p.name,
     startedAt: now,
     notes: '',
     exercises: p.exercises.map(ex => ({
@@ -500,13 +503,36 @@ function restoreExercise(src, base) {
   };
 }
 
+// Nombre de la sesión de un borrador: el de su rutina o, si ya no está en el plan, el guardado al empezar.
+export function draftName(draft) {
+  const p = draft && getPlanSession(draft.planSessionId);
+  if (p) return p.name;
+  const n = draft && typeof draft.name === 'string' ? draft.name.trim().slice(0, LIMITS.name) : '';
+  return n || ORPHAN_DRAFT_NAME;
+}
+
+// Borrador cuya rutina ya no existe (borrada fuera de la app o plan dañado): se reconstruye solo con lo guardado.
+function orphanDraft(raw, startedAt) {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    id: newId(startedAt),
+    planSessionId: raw.planSessionId,
+    name: draftName({ name: raw.name }),
+    startedAt,
+    notes: '',
+    exercises: [],
+  };
+}
+
 // Reconstruye un borrador guardado. Lo que no encaje se descarta valor a valor; los ejercicios
 // sin forma válida se omiten y, si no queda ninguno, se parte del plan.
+// Si la rutina ya no está en el plan, el borrador se conserva con sus propios ejercicios (sin
+// ellos no hay nada que conservar y devuelve null).
 export function restoreDraft(raw, now = Date.now()) {
   if (!isPlainObject(raw) || !isId(raw.planSessionId)) return null;
+  const startedAt = isTs(raw.startedAt) ? raw.startedAt : now;
   // La rutina pudo editarse después de empezar: el borrador guardado manda, la rutina solo rellena huecos.
-  const draft = baseDraft(raw.planSessionId, isTs(raw.startedAt) ? raw.startedAt : now);
-  if (!draft) return null;
+  const draft = baseDraft(raw.planSessionId, startedAt) || orphanDraft(raw, startedAt);
   if (isId(raw.id)) draft.id = raw.id;
   draft.notes = clampText(raw.notes, LIMITS.notes);
   if (Array.isArray(raw.exercises)) {
@@ -676,13 +702,15 @@ export function draftStats(draft) {
 }
 
 // Convierte el borrador en una sesión v2 validada. Devuelve { ok, session } | { ok:false, error }.
+// Si la rutina ya no está en el plan, la sesión conserva su id (el historial queda enlazado si vuelve).
 export function finalizeDraft(draft, now = Date.now()) {
-  const p = draft && getPlanSession(draft.planSessionId);
-  if (!p) return { ok: false, error: 'borrador sin sesión del plan' };
+  if (!isPlainObject(draft) || !isId(draft.planSessionId) || !Array.isArray(draft.exercises)) {
+    return { ok: false, error: 'borrador inválido' };
+  }
   return validateSession({
     id: draft.id,
-    planSessionId: p.id,
-    name: p.name,
+    planSessionId: draft.planSessionId,
+    name: draftName(draft),
     startedAt: draft.startedAt,
     endedAt: Math.max(now, draft.startedAt),
     notes: draft.notes,
