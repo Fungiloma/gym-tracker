@@ -135,15 +135,26 @@ try {
   await type(reps(0), '10');
   assert.equal(await kg(0).getAttribute('aria-invalid'), null);
 
-  // 6. Guardar con series sin completar avisa con el número; aceptar guarda.
+  // 6. Guardar con series sin completar y con valores sin ✓ avisa con los números; cancelar vuelve; aceptar guarda
+  // y la serie sin ✓ se guarda con su valor pero sin contar como hecha.
+  answer = 'dismiss';
   await page.locator('[data-action="complete-session"]').click();
+  assert.match(dialogs.at(-1), /1 serie con valores sin marcar/);
+  assert.match(dialogs.at(-1), /no cuentan para récords, volumen ni sobrecarga/);
   assert.match(dialogs.at(-1), /Hay \d+ de \d+ series sin completar/);
+  assert.ok(await page.locator('#screen-session.active').count() === 1, 'cancelar vuelve a la sesión');
+  assert.equal(await ls('gymtracker.data'), null);
+  answer = 'accept';
+  await page.locator('[data-action="complete-session"]').click();
   await page.waitForSelector('#screen-summary.active');
   assert.match(await page.locator('#summary-text').textContent(), /Serie 1: 60kg × 10 \(obj\. 8-10\)/);
   const data = await ls('gymtracker.data');
   assert.equal(data.schemaVersion, 2);
   assert.equal(data.sessions.length, 1);
   assert.ok(data.sessions[0].endedAt >= data.sessions[0].startedAt);
+  const saved = data.sessions[0].exercises[0].series[0];
+  assert.equal(saved.weight, 60);
+  assert.equal(saved.done, false, 'valores sin ✓ no cuentan como hecha');
 
   // 7. El valor anterior va en su columna, nunca como valor: solo se usa al tocarla.
   await page.locator('#screen-summary [data-action="go-back"]').click();
@@ -171,7 +182,7 @@ try {
   [download] = await Promise.all([page.waitForEvent('download'), page.locator('[data-action="export-csv"]').click()]);
   const csv = readFileSync(await download.path(), 'utf8');
   assert.ok(csv.startsWith('﻿session_id,started_at,'), 'CSV con BOM y cabecera');
-  assert.match(csv, /press-banca-mancuernas,Press banca mancuernas,1,normal,8-10,60,,10,,true/);
+  assert.match(csv, /press-banca-mancuernas,Press banca mancuernas,1,normal,8-10,60,,10,,false/);
 
   // 9. Import con HTML malicioso: vista previa como texto, fusión por id, nada se ejecuta.
   const evil = {

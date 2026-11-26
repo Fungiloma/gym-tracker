@@ -7,7 +7,9 @@ import { fieldsForExerciseId, isDateKey } from './data.js';
 import { kgToDisplay, unitLabel } from './units.js';
 
 export const MAX_REPS_1RM = 30;
-const DAY = 86_400_000;
+// Dos pesos son "el mismo" si difieren menos que el redondeo de pasar lb a kg (0,1 lb ≈ 0,045 kg).
+const SAME_WEIGHT_KG = 0.05;
+const sameWeight = (a, b) => Math.abs(a - b) <= SAME_WEIGHT_KG;
 
 // ==================== SERIES ====================
 export function pairsWeightReps(exerciseId) {
@@ -48,6 +50,12 @@ export function sessionSetCount(session) {
 
 export function round1(n) {
   return Math.round(n * 10) / 10;
+}
+
+// Peso interno (kg) como número de la unidad activa, con un decimal. Es el único redondeo: los valores
+// guardados y los récords van sin redondear para que 225 lb no vuelva como 225,1.
+export function displayWeight(kg) {
+  return round1(kgToDisplay(kg));
 }
 
 // ==================== FECHAS ====================
@@ -99,7 +107,7 @@ export function listExercises(sessions) {
   return [...map.values()].sort((a, b) => b.last - a.last);
 }
 
-// Puntos cronológicos de un ejercicio: [{ ts, sessionId, topWeight, best1RM, volume, sets }]. Sin series válidas, no hay punto.
+// Puntos cronológicos de un ejercicio: [{ ts, sessionId, topWeight, best1RM|null, volume, sets }]. Sin series válidas, no hay punto.
 export function exerciseProgress(sessions, exerciseId) {
   const points = [];
   for (const s of [...sessions].sort((a, b) => a.startedAt - b.startedAt)) {
@@ -107,11 +115,13 @@ export function exerciseProgress(sessions, exerciseId) {
       if (ex.id !== exerciseId) continue;
       const sets = countedSeries(ex);
       if (!sets.length) continue;
+      const oneRMs = sets.map(x => epley1RM(x.weight, x.repsDone)).filter(v => v !== null);
       points.push({
         ts: s.startedAt,
         sessionId: s.id,
         topWeight: Math.max(...sets.map(x => x.weight)),
-        best1RM: Math.max(...sets.map(x => epley1RM(x.weight, x.repsDone) ?? 0)),
+        // null si ninguna serie tiene un 1RM fiable (todas por encima de MAX_REPS_1RM): no se dibuja un 0.
+        best1RM: oneRMs.length ? Math.max(...oneRMs) : null,
         volume: sets.reduce((sum, x) => sum + seriesVolume(x), 0),
         sets: sets.length,
       });
@@ -144,7 +154,8 @@ function priorBest(previous, exerciseId) {
 
 // Récords personales de `session` frente a `previous` (sesiones anteriores). Un ejercicio sin historial
 // previo no genera récords: su primera vez solo fija la base. Un récord por tipo y ejercicio.
-// Repeticiones: más reps que cualquier serie previa con el mismo peso o más.
+// Repeticiones: más reps que cualquier serie previa con el MISMO peso (tolerancia de redondeo lb↔kg),
+// sin contar drops y sin repetir una serie que ya es récord de peso.
 // → [{ exerciseId, name, kind, value, previous }]
 export function detectRecords(previous, session) {
   const before = previous.filter(p => p.id !== session.id && p.startedAt < session.startedAt);
@@ -154,7 +165,8 @@ export function detectRecords(previous, session) {
     if (!sets.length) continue;
     const best = priorBest(before, ex.id);
     if (!best.any) continue;
-    const add = (kind, value, prev) => out.push({ exerciseId: ex.id, name: ex.name, kind, value: round1(value), previous: round1(prev) });
+    // Los valores van sin redondear (en kg internos): formatRecord redondea una sola vez, ya en la unidad activa.
+    const add = (kind, value, prev) => out.push({ exerciseId: ex.id, name: ex.name, kind, value, previous: prev });
 
     const top = Math.max(...sets.map(x => x.weight));
     if (top > best.weight) add('weight', top, best.weight);
@@ -162,15 +174,17 @@ export function detectRecords(previous, session) {
     const oneRM = Math.max(...sets.map(x => epley1RM(x.weight, x.repsDone) ?? 0));
     if (oneRM > best.oneRM) add('oneRM', oneRM, best.oneRM);
 
+    // Repeticiones: solo con una serie previa con el mismo peso (sin drops) y superándola. Una serie que
+    // ya es récord de peso no genera además uno de repeticiones.
     let repsPr = null;
     for (const x of sets) {
-      const beaten = !best.sets.some(p => p.weight >= x.weight && p.repsDone >= x.repsDone);
-      if (beaten && (!repsPr || x.repsDone > repsPr.repsDone)) repsPr = x;
+      if (x.type === 'drop' || x.weight > best.weight) continue;
+      const prior = best.sets.filter(p => p.type !== 'drop' && sameWeight(p.weight, x.weight));
+      if (!prior.length) continue;
+      const prevReps = Math.max(...prior.map(p => p.repsDone));
+      if (x.repsDone > prevReps && (!repsPr || x.repsDone > repsPr.set.repsDone)) repsPr = { set: x, prevReps };
     }
-    if (repsPr) {
-      const prevReps = Math.max(0, ...best.sets.filter(p => p.weight >= repsPr.weight).map(p => p.repsDone));
-      add('reps', repsPr.repsDone, prevReps);
-    }
+    if (repsPr) add('reps', repsPr.set.repsDone, repsPr.prevReps);
 
     const vol = sets.reduce((sum, x) => sum + seriesVolume(x), 0);
     if (vol > best.volume) add('volume', vol, best.volume);
@@ -181,7 +195,7 @@ export function detectRecords(previous, session) {
 export function formatRecord(r) {
   const isReps = r.kind === 'reps';
   const unit = isReps ? ' reps' : ` ${unitLabel()}`;
-  const show = v => fmt(isReps ? v : round1(kgToDisplay(v)));
+  const show = v => fmt(isReps ? v : displayWeight(v));
   const prev = r.previous > 0 ? ` (antes ${show(r.previous)})` : '';
   return `${r.name}: ${RECORD_LABEL[r.kind]} ${show(r.value)}${unit}${prev}`;
 }
@@ -191,7 +205,7 @@ export function exerciseBests(sessions, exerciseId) {
   const best = priorBest(sessions, exerciseId);
   if (!best.any) return null;
   const maxReps = Math.max(...best.sets.map(x => x.repsDone));
-  return { weight: best.weight, oneRM: round1(best.oneRM), volume: best.volume, maxReps };
+  return { weight: best.weight, oneRM: best.oneRM, volume: best.volume, maxReps };
 }
 
 // ==================== SEMANAS Y RACHAS ====================
@@ -289,7 +303,9 @@ export function buildWeeklySummary(sessions, body, weekTs) {
   const end = addWeeks(weekTs, 1);
   const inWeek = sessions.filter(s => s.startedAt >= weekTs && s.startedAt < end).sort((a, b) => a.startedAt - b.startedAt);
   const prevWeek = sessions.filter(s => s.startedAt >= addWeeks(weekTs, -1) && s.startedAt < weekTs);
-  const lastDay = end - DAY;
+  // Domingo de esa semana por calendario: en la semana del cambio de hora `end - DAY` cae en el sábado.
+  const first = new Date(weekTs);
+  const lastDay = new Date(first.getFullYear(), first.getMonth(), first.getDate() + 6).getTime();
   const lines = [`[RESUMEN SEMANAL] ${shortDate(weekTs)} a ${shortDate(lastDay)} ${new Date(lastDay).getFullYear()}`];
 
   if (!inWeek.length) {

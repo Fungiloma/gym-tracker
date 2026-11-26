@@ -2,6 +2,15 @@
 
 Cambios por fase del plan de auditoría ([docs/PLAN-AUDITORIA.md](docs/PLAN-AUDITORIA.md)). El historial de commits es la fuente definitiva.
 
+## Fase 10b. Correcciones y rendimiento
+
+- Una serie solo cuenta como hecha (volumen, récords, sobrecarga) con ✓; al guardar se avisa de las series con valores sin marcar.
+- Récord de repeticiones solo frente a una serie previa con el mismo peso; los drops no lo generan.
+- Historial paginado (50 y "Ver más"), búsqueda con debounce de 200 ms y expandir sin repintar: con 2.000 sesiones y CPU x4, abrir pasa de 1,8 s a 0,2 s.
+- Aviso al pasar del 70 % de la cuota estimada de localStorage.
+- Correcciones: Deshacer de serie quitada ligado a su borrador, límite único de descanso (3.600 s), doble atrás, redondeo de récords en lb, cabecera del resumen semanal en el cambio de hora, límite de rutinas solo para activas, ids de ejercicios v1 por nombre, 1RM sin punto a 0, duración vacía como 0.
+- Detalle en [docs/REVISION-CODIGO.md](docs/REVISION-CODIGO.md). `CACHE_VERSION` sube a v8.
+
 ## Fase 10a. Integridad de datos
 
 - Datos dañados o de una versión más nueva: no se escribe en `gymtracker.data` hasta descargar el original; el aviso solo habla de copia si se hizo.

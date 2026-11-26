@@ -125,7 +125,7 @@ test('lector v1: convierte, reubica reps de superseries y tolera basura', () => 
   assert.equal(a.exercises[1].series[3].type, 'drop');
   assert.equal(a.exercises[1].series[3].weight, null);
   assert.equal(a.exercises[1].series[3].done, false);
-  assert.match(a.exercises[2].id, /^v1-ex-/);
+  assert.match(a.exercises[2].id, /^x-/, 'ejercicio fuera del plan: id por nombre, no posicional');
 
   assert.match(b.id, /^v1-\d+-1$/, 'id hostil sustituido');
   assert.equal(b.name, XSS, 'el texto se conserva tal cual, se pinta como texto');
@@ -154,7 +154,7 @@ test('borrador: crear desde el plan, solo campos declarados y valores validados'
   assert.equal(d.exercises[0].series[0].done, false, 'escribir no marca como hecha');
 
   const total = P1.exercises.reduce((n, e) => n + e.series.length, 0);
-  assert.deepEqual(draftStats(d), { total, filled: 1, missing: total - 1 });
+  assert.deepEqual(draftStats(d), { total, filled: 1, missing: total - 1, unchecked: 1 });
   assert.equal(setDraftValue(d, 0, 0, 'weight', '').ok, true);
   d.exercises[0].series[0].done = true;
   assert.equal(setDraftValue(d, 0, 0, 'repsDone', '').ok, true);

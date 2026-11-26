@@ -17,6 +17,15 @@ export function unitLabel() {
   return unit;
 }
 
+const DECIMAL_RE = /^(\d+(\.\d*)?|\.\d+)$/;
+
+// Lo que escribe el usuario (coma o punto decimal) → número no negativo, o null si no es un decimal simple.
+// Es la única definición de "número escrito a mano": valores de series, medidas corporales y lb → kg.
+export function parseDecimal(raw) {
+  const t = String(raw).trim().replace(',', '.');
+  return DECIMAL_RE.test(t) ? Number(t) : null;
+}
+
 const round = (n, decimals) => {
   const f = 10 ** decimals;
   return Math.round(n * f) / f;
@@ -43,9 +52,8 @@ export function inputToKg(raw) {
   if (unit === 'kg') return raw;
   if (typeof raw === 'number') return Number.isFinite(raw) ? lbToKg(raw) : raw;
   if (typeof raw !== 'string') return raw;
-  const t = raw.trim().replace(',', '.');
-  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return raw;
-  return lbToKg(Number(t));
+  const n = parseDecimal(raw);
+  return n === null ? raw : lbToKg(n);
 }
 
 // Peso en la unidad activa, como texto sin unidad ("22.5", "49.6").

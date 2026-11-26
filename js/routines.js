@@ -7,12 +7,13 @@
 //  - Un ejercicio o rutina con historial (o en la sesión en curso) no se borra: se archiva.
 //  - No se borra ni archiva un ejercicio que use una rutina activa; antes hay que quitarlo de ella.
 //  - Importar un plan sustituye rutinas y biblioteca, pero lo usado por el historial se conserva archivado.
-import { PLAN_VERSION, BADGE, MUSCLES, defaultPlan } from './plan.js';
+import { PLAN_VERSION, BADGE, MUSCLES, defaultPlan, clone } from './plan.js';
 import { isPlainObject, isId, slugId, newId, LIMITS, MAX_REST } from './data.js';
 
 export const PLAN_LIMITS = {
   exercises: 300,
-  routines: 50,
+  routines: 50, // activas
+  archivedRoutines: 200, // las archivadas guardan historial y no cuentan contra las activas
   routineExercises: LIMITS.exercises,
   series: LIMITS.series,
   name: LIMITS.name,
@@ -138,7 +139,7 @@ export function validatePlan(raw) {
     check(isPlainObject(raw), 'plan: no es un objeto');
     check(raw.planVersion === PLAN_VERSION, 'plan: versión no soportada');
     check(Array.isArray(raw.exercises) && raw.exercises.length <= PLAN_LIMITS.exercises, `plan: biblioteca inválida (máx. ${PLAN_LIMITS.exercises})`);
-    check(Array.isArray(raw.routines) && raw.routines.length <= PLAN_LIMITS.routines, `plan: rutinas inválidas (máx. ${PLAN_LIMITS.routines})`);
+    check(Array.isArray(raw.routines) && raw.routines.length <= PLAN_LIMITS.routines + PLAN_LIMITS.archivedRoutines, 'plan: rutinas inválidas');
     const library = new Map();
     const exercises = raw.exercises.map((e, i) => {
       const ex = validateLibraryExercise(e, i);
@@ -153,6 +154,9 @@ export function validatePlan(raw) {
       ids.add(out.id);
       return out;
     });
+    const archivedCount = routines.filter(r => r.archived).length;
+    check(routines.length - archivedCount <= PLAN_LIMITS.routines, `plan: demasiadas rutinas (máx. ${PLAN_LIMITS.routines} activas)`);
+    check(archivedCount <= PLAN_LIMITS.archivedRoutines, `plan: demasiadas rutinas archivadas (máx. ${PLAN_LIMITS.archivedRoutines})`);
     return { ok: true, plan: { planVersion: PLAN_VERSION, exercises, routines } };
   } catch (e) {
     if (e instanceof PlanError) return { ok: false, error: e.message };
@@ -248,8 +252,6 @@ export function resetToDefault(current, used) {
 }
 
 // ==================== EDITOR ====================
-const clone = v => JSON.parse(JSON.stringify(v));
-
 function commit(plan) {
   return validatePlan(plan);
 }
@@ -364,6 +366,7 @@ export function restoreRoutine(plan, id) {
 function toInt(v) {
   if (typeof v === 'number') return v;
   const t = String(v ?? '').trim();
+  if (t === '') return 0; // un campo vaciado es 0 (sin duración, sin descanso), no un error técnico
   return /^\d{1,6}$/.test(t) ? Number(t) : NaN;
 }
 

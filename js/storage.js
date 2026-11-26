@@ -39,6 +39,26 @@ function defaultStorage() {
   return globalThis.localStorage;
 }
 
+// Cuota de localStorage: los navegadores dan unos 5 millones de caracteres por origen (5 MiB en UTF-16 según
+// Chromium, Firefox y Safari). No se puede consultar, así que es una estimación: se avisa a partir del 70 %.
+export const QUOTA_CHARS = 5_000_000;
+export const QUOTA_WARN = 0.7;
+
+// → { chars, ratio } con lo que ocupa la app (claves + valores), o null si no se puede medir.
+export function storageUsage(storage = defaultStorage()) {
+  try {
+    let chars = 0;
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key === null || !key.startsWith('gymtracker.')) continue;
+      chars += key.length + (storage.getItem(key) || '').length;
+    }
+    return { chars, ratio: chars / QUOTA_CHARS };
+  } catch {
+    return null;
+  }
+}
+
 function get(storage, key) {
   try {
     return storage.getItem(key);

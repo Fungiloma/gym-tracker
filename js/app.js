@@ -8,7 +8,7 @@ import {
   substituteExercise, setNote, defaultRest, restForSeries, MAX_REST,
   getSettings, applySetting, fieldsForExerciseId,
 } from './data.js';
-import { setUnit, getUnit, unitLabel, inputToKg, kgToDisplay, progressionStepKg } from './units.js';
+import { setUnit, unitLabel, inputToKg, kgToDisplay, progressionStepKg } from './units.js';
 import { registerServiceWorker, shortcutIndex, hasShortcutParam } from './pwa.js';
 import { suggestOverload, deloadNotices } from './progress.js';
 import { renderSettings, renderPlates, renderPlateResult, readPlatesForm, defaultBarKg, defaultPlatesKg } from './tools.js';
@@ -19,7 +19,7 @@ import {
 } from './timers.js';
 import {
   h, renderHome, renderSession, renderSeriesRow, renderImportPreview, formatDate,
-  renderRestBar, updateRestBar, renderNotices,
+  renderRestBar, updateRestBar, renderNotices, HISTORY_PAGE,
 } from './views.js';
 import { renderHistoryView, TABS } from './history.js';
 import {
@@ -29,7 +29,7 @@ import {
   removeExercise, restoreExercise, PLAN_LIMITS,
 } from './routines.js';
 import { renderRoutines, renderRoutineEditor, renderLibrary } from './editor.js';
-import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, dayKey } from './stats.js';
+import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, dayKey, shiftMonth } from './stats.js';
 
 // ==================== STATE ====================
 // data: datos persistentes (gymtracker.data). draft: sesión en curso (gymtracker.draft).
@@ -37,7 +37,6 @@ import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, d
 // ui.timer: el único descanso activo (se guarda solo en eventos, no en cada tick).
 const DEFAULT_UI = { timer: null, restByExercise: {}, expandedSessions: [], notifAsked: false, guided: false, guidedIndex: 0 };
 const REST_STEP = 15;
-const REST_STEP_MAX = 600;
 
 let data = null;
 let draft = null;
@@ -54,7 +53,9 @@ let editingRoutine = null;
 let editingExercise = null;
 let pendingPlanImport = null;
 // Estado de la pantalla de historial (no se guarda): pestaña, filtros y navegación de calendario/semana.
-const view = { tab: 'sessions', search: '', plan: '', exerciseId: null, calYear: 0, calMonth: 0, weekOffset: 0 };
+const view = { tab: 'sessions', search: '', plan: '', limit: HISTORY_PAGE, exerciseId: null, calYear: 0, calMonth: 0, weekOffset: 0 };
+const SEARCH_DEBOUNCE_MS = 200;
+let searchTimer = null;
 
 const $ = id => document.getElementById(id);
 const container = () => $('exercises-container');
@@ -230,6 +231,7 @@ function onPlanEdit(el) {
     return;
   }
   if (el.type === 'text') el.value = el.value.trim();
+  if ((el.dataset.edit === 'routine-duration' || el.dataset.edit === 'series-rest') && el.value === '') el.value = '0';
   if (el.dataset.edit === 'routine-name') $('routine-title').textContent = el.value;
   if (el.dataset.edit === 'exercise-name') {
     const title = el.closest('.editor-row').querySelector('.editor-row-title');
@@ -287,8 +289,16 @@ function resetPlan() {
   planAction(resetToDefault(getActivePlan(), used()), 'Plan original restablecido');
 }
 
+// Aviso al pasar del 70 % de la cuota estimada de localStorage (ver storage.storageUsage).
+function quotaNotices() {
+  const usage = storage.storageUsage();
+  if (!usage || usage.ratio < storage.QUOTA_WARN) return [];
+  const pct = Math.round(usage.ratio * 100);
+  return [{ kind: 'quota', text: `El almacenamiento del navegador va por el ${pct} %. Descarga una copia (Ajustes) y valora borrar sesiones antiguas antes de que se llene: con el almacenamiento lleno no se puede guardar.` }];
+}
+
 function renderHomeNotices() {
-  renderNotices($('home-notices'), settings().progression ? deloadNotices(data.sessions) : []);
+  renderNotices($('home-notices'), [...(settings().progression ? deloadNotices(data.sessions) : []), ...quotaNotices()]);
 }
 
 // ==================== AVISOS ====================
@@ -436,12 +446,24 @@ function goScreen(name, mode = 'push') {
   showScreen(name);
 }
 
+// Entre history.back() y su popstate el estado aún es el de antes: un segundo "atrás" rápido saldría de
+// la app. Mientras vuelve, se ignoran los demás; el temporizador cubre un popstate que no llegue.
+let goingBack = false;
+let goingBackTimer = null;
+
 function goBack() {
-  if (depth() > 0) history.back();
-  else goScreen('home', 'replace');
+  if (goingBack) return;
+  if (depth() > 0) {
+    goingBack = true;
+    clearTimeout(goingBackTimer);
+    goingBackTimer = setTimeout(() => { goingBack = false; }, 600);
+    history.back();
+  } else goScreen('home', 'replace');
 }
 
 function onPopState(e) {
+  goingBack = false;
+  clearTimeout(goingBackTimer);
   let name = (e.state && e.state.screen) || 'home';
   if (name === 'routine' && !getPlanSession(editingRoutine)) name = 'routines';
   if ((name === 'session' && !draft) || (name === 'summary' && !summaryShown)) {
@@ -526,6 +548,7 @@ function renderSessionView() {
 
 function endDraft() {
   draft = null;
+  hideToast();
   substituting = null;
   storage.clearDraft();
   ui.timer = null;
@@ -547,11 +570,17 @@ function discardSession() {
 
 function completeSession() {
   if (!draft) return;
-  const { total, filled, missing } = draftStats(draft);
+  const { total, filled, missing, unchecked } = draftStats(draft);
   if (filled === 0) {
     if (!confirm('No has apuntado ninguna serie. ¿Guardar la sesión vacía igualmente?')) return;
-  } else if (missing > 0) {
-    if (!confirm(`Hay ${missing} de ${total} series sin completar. ¿Guardar igualmente?`)) return;
+  } else if (missing > 0 || unchecked > 0) {
+    // Una serie solo cuenta como hecha con ✓. Aceptar guarda igualmente; cancelar vuelve a la sesión.
+    const lines = [];
+    if (unchecked > 0) {
+      lines.push(`${unchecked} ${unchecked === 1 ? 'serie con valores sin marcar' : 'series con valores sin marcar'} (✓): no cuentan para récords, volumen ni sobrecarga.`);
+    }
+    if (missing > 0) lines.push(`Hay ${missing} de ${total} series sin completar.`);
+    if (!confirm(`${lines.join('\n')}\n¿Guardar igualmente? Cancelar vuelve a la sesión.`)) return;
   }
 
   const r = finalizeDraft(draft);
@@ -643,6 +672,7 @@ function addSeriesTo(exIdx) {
 function removeSeriesFrom(exIdx) {
   if (!draft || exIdx === null) return;
   const exId = draft.exercises[exIdx] && draft.exercises[exIdx].id;
+  const draftId = draft.id;
   const removed = removeLastSeries(draft, exIdx);
   if (!removed) {
     toast('Cada ejercicio necesita al menos una serie.', 'error');
@@ -653,7 +683,9 @@ function removeSeriesFrom(exIdx) {
   toast(`Serie ${removed.index + 1} quitada`, 'info', {
     label: 'Deshacer',
     run: () => {
-      const i = draft ? draft.exercises.findIndex(e => e.id === exId) : -1;
+      // Solo se deshace en el borrador donde se quitó: otra sesión puede tener el mismo ejercicio.
+      if (!draft || draft.id !== draftId) return;
+      const i = draft.exercises.findIndex(e => e.id === exId);
       if (i < 0 || !insertSeries(draft, i, removed.index, removed.series)) return;
       saveDraft();
       renderSessionView();
@@ -705,7 +737,7 @@ function confirmSubstitute(exIdx) {
 function stepRest(exIdx, delta) {
   const ex = draft && exIdx !== null && draft.exercises[exIdx];
   if (!ex || !Number.isInteger(delta)) return;
-  const next = Math.min(REST_STEP_MAX, Math.max(0, restOf(ex) + delta));
+  const next = Math.min(MAX_REST, Math.max(0, restOf(ex) + delta));
   ui.restByExercise[ex.id] = next;
   saveUi();
   renderSessionView();
@@ -873,19 +905,28 @@ function copySummary(btn) {
   copyText($('summary-text').textContent, btn);
 }
 
-function copyText(text, btn) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => flashCopied(btn));
-    return;
-  }
+// Copia con un textarea temporal (navegadores sin Clipboard API o con permiso denegado). true si copió.
+function legacyCopy(text) {
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.className = 'clipboard-fallback';
   document.body.appendChild(ta);
   ta.select();
-  document.execCommand('copy');
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {}
   document.body.removeChild(ta);
-  flashCopied(btn);
+  return ok;
+}
+
+function copyText(text, btn) {
+  const done = ok => (ok ? flashCopied(btn) : toast('No se pudo copiar. Selecciona el texto y cópialo a mano.', 'error'));
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => flashCopied(btn), () => done(legacyCopy(text)));
+    return;
+  }
+  done(legacyCopy(text));
 }
 
 // ==================== HISTORY ====================
@@ -917,6 +958,7 @@ function syncHistoryChrome() {
 }
 
 function renderHistoryScreen() {
+  clearTimeout(searchTimer);
   syncHistoryChrome();
   renderHistoryView($('history-container'), view, data, ui.expandedSessions);
 }
@@ -927,6 +969,7 @@ function openHistory() {
   view.calMonth = now.getMonth();
   view.weekOffset = 0;
   view.exerciseId = null;
+  view.limit = HISTORY_PAGE;
   // Las rutinas se pueden editar: la lista se rehace cada vez (las archivadas siguen en el historial).
   const sel = $('history-plan');
   const routines = planSessions({ archived: true });
@@ -942,13 +985,14 @@ function setHistoryTab(tab) {
   if (!TABS.some(([id]) => id === tab)) return;
   view.tab = tab;
   view.exerciseId = null;
+  view.limit = HISTORY_PAGE;
   renderHistoryScreen();
 }
 
 function shiftCalendar(delta) {
-  const d = new Date(view.calYear, view.calMonth + delta, 1);
-  view.calYear = d.getFullYear();
-  view.calMonth = d.getMonth();
+  const next = shiftMonth(view.calYear, view.calMonth, delta);
+  view.calYear = next.year;
+  view.calMonth = next.month;
   renderHistoryScreen();
 }
 
@@ -1102,7 +1146,10 @@ function toggleExpandSession(id) {
   if (idx >= 0) ui.expandedSessions.splice(idx, 1);
   else ui.expandedSessions.push(id);
   saveUi();
-  renderHistoryScreen();
+  // Se alterna la clase de esa tarjeta: repintar toda la lista por abrir una costaba más de un segundo.
+  const card = [...$('history-container').querySelectorAll('.session-card')].find(c => c.dataset.id === id);
+  if (card) card.classList.toggle('expanded', idx < 0);
+  else renderHistoryScreen();
 }
 
 // ==================== PROGRESIÓN Y MODO GUIADO ====================
@@ -1156,7 +1203,7 @@ function stepSettingAction(el) {
   const key = el.dataset.key;
   const delta = Number(el.dataset.delta);
   if (key !== 'defaultRest' || !Number.isInteger(delta)) return;
-  changeSetting(key, Math.min(REST_STEP_MAX, Math.max(0, settings().defaultRest + delta)));
+  changeSetting(key, Math.min(MAX_REST, Math.max(0, settings().defaultRest + delta)));
 }
 
 function showPlates() {
@@ -1258,8 +1305,9 @@ async function shareCard() {
 }
 
 // ==================== EXPORT / IMPORT ====================
+// Fecha local (no UTC) para los nombres de fichero: tras las 00:00 UTC+x o antes de las 00:00 UTC-x el día cambia.
 function stamp() {
-  return new Date().toISOString().slice(0, 10);
+  return dayKey(Date.now());
 }
 
 function exportFile(kind) {
@@ -1376,6 +1424,7 @@ const ACTIONS = {
   'share-card': () => shareCard(),
   'toggle-expand': el => toggleExpandSession(el.dataset.id),
   'delete-session': el => deleteSession(el.dataset.id),
+  'history-more': () => { view.limit += HISTORY_PAGE; renderHistoryScreen(); },
   'history-tab': el => setHistoryTab(el.dataset.tab),
   'select-exercise': el => { view.exerciseId = el.dataset.id; renderHistoryScreen(); },
   'clear-exercise': () => { view.exerciseId = null; renderHistoryScreen(); },
@@ -1441,12 +1490,16 @@ function initEvents() {
   $('plates-container').addEventListener('input', e => {
     if (e.target.classList.contains('plates-input')) updatePlates();
   });
+  // La búsqueda espera a que se deje de teclear: filtrar y repintar en cada letra bloqueaba el móvil.
   $('history-search').addEventListener('input', e => {
     view.search = e.target.value;
-    renderHistoryScreen();
+    view.limit = HISTORY_PAGE;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderHistoryScreen, SEARCH_DEBOUNCE_MS);
   });
   $('history-plan').addEventListener('change', e => {
     view.plan = e.target.value;
+    view.limit = HISTORY_PAGE;
     renderHistoryScreen();
   });
 
@@ -1508,11 +1561,13 @@ function initEvents() {
   });
 }
 
+// Un solo listener: cada oferta de versión sustituye la función a ejecutar en vez de apilar otro clic.
 function initServiceWorker() {
+  let applyUpdate = null;
+  $('update-reload').addEventListener('click', () => { if (applyUpdate) applyUpdate(); });
   registerServiceWorker(apply => {
-    const banner = $('update-banner');
-    $('update-reload').addEventListener('click', apply);
-    banner.hidden = false;
+    applyUpdate = apply;
+    $('update-banner').hidden = false;
   });
 }
 

@@ -9,8 +9,8 @@
 //
 // Validación estricta para lo que dice ser v2 (se rechaza la sesión entera si algo no
 // cuadra) y lector tolerante para la v1 (se convierte lo que se pueda).
-import { getPlanSession, findPlanSessionByName, findPlanExercise, findLibraryExerciseByName, fieldsFor } from './plan.js';
-import { kgToDisplay, unitLabel } from './units.js';
+import { getPlanSession, findPlanSessionByName, findPlanExercise, findLibraryExerciseByName, fieldsFor, planRevision } from './plan.js';
+import { kgToDisplay, unitLabel, parseDecimal } from './units.js';
 
 export const SCHEMA_VERSION = 2;
 export const SERIES_TYPES = ['normal', 'warmup', 'drop', 'failure'];
@@ -53,7 +53,7 @@ const SETTING_CHECKS = {
   sound: v => typeof v === 'boolean',
   vibration: v => typeof v === 'boolean',
   progression: v => typeof v === 'boolean',
-  defaultRest: v => Number.isInteger(v) && v >= 0 && v <= 3600,
+  defaultRest: v => Number.isInteger(v) && v >= 0 && v <= MAX_REST,
   bar: v => typeof v === 'number' && Number.isFinite(v) && v >= SETTINGS_LIMITS.bar.min && v <= SETTINGS_LIMITS.bar.max,
   plates: v => Array.isArray(v) && v.length >= 1 && v.length <= SETTINGS_LIMITS.plates
     && v.every(p => typeof p === 'number' && Number.isFinite(p) && p >= SETTINGS_LIMITS.plate.min && p <= SETTINGS_LIMITS.plate.max),
@@ -128,9 +128,22 @@ export function emptyData() {
   return { schemaVersion: SCHEMA_VERSION, sessions: [], body: [], settings: {} };
 }
 
+// Memorizado por versión del plan (se llama por cada ejercicio de cada sesión al pintar y analizar).
+let fieldsCache = new Map();
+let fieldsRevision = -1;
+
 export function fieldsForExerciseId(id) {
-  const ex = findPlanExercise(id);
-  return ex ? fieldsFor(ex) : GENERIC_FIELDS;
+  if (fieldsRevision !== planRevision()) {
+    fieldsCache = new Map();
+    fieldsRevision = planRevision();
+  }
+  let fields = fieldsCache.get(id);
+  if (!fields) {
+    const ex = findPlanExercise(id);
+    fields = ex ? fieldsFor(ex) : GENERIC_FIELDS;
+    fieldsCache.set(id, fields);
+  }
+  return fields;
 }
 
 // ==================== VALORES ====================
@@ -147,11 +160,9 @@ export function parseValue(key, raw) {
   if (raw === null || raw === undefined) return { ok: true, value: null };
   if (typeof raw === 'number') return inRange(key, raw) ? { ok: true, value: raw } : { ok: false, value: null };
   if (typeof raw !== 'string') return { ok: false, value: null };
-  const t = raw.trim().replace(',', '.');
-  if (t === '') return { ok: true, value: null };
-  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return { ok: false, value: null };
-  const n = Number(t);
-  return inRange(key, n) ? { ok: true, value: n } : { ok: false, value: null };
+  if (raw.trim() === '') return { ok: true, value: null };
+  const n = parseDecimal(raw);
+  return n !== null && inRange(key, n) ? { ok: true, value: n } : { ok: false, value: null };
 }
 
 export function hasValues(series) {
@@ -288,9 +299,9 @@ export function parseBodyInput(date, raws) {
   for (const f of BODY_FIELDS) {
     const raw = raws && raws[f.key];
     if (raw === undefined || raw === null || String(raw).trim() === '') { out[f.key] = null; continue; }
-    const t = String(raw).trim().replace(',', '.');
-    if (!/^(\d+(\.\d*)?|\.\d+)$/.test(t)) return { ok: false, error: `${f.label}: valor no válido` };
-    out[f.key] = Number(t);
+    const n = parseDecimal(raw);
+    if (n === null) return { ok: false, error: `${f.label}: valor no válido` };
+    out[f.key] = n;
   }
   const r = validateBodyEntry(out);
   return r.ok ? r : { ok: false, error: r.error.replace(/^medida: /, '') };
@@ -398,9 +409,12 @@ function v1Session(raw, index, usedIds) {
     .slice(0, LIMITS.exercises)
     .map((ex, j) => {
       const planEx = (plan && plan.exercises.find(e => e.name === ex.name)) || null;
+      const name = text(ex.name, LIMITS.name) || 'Ejercicio';
       return {
-        id: planEx ? planEx.id : `v1-ex-${j}`,
-        name: text(ex.name, LIMITS.name) || 'Ejercicio',
+        // Fuera del plan, el id sale del nombre (como al sustituir en una sesión): el id posicional
+        // fusionaba ejercicios distintos que ocupaban el mismo lugar en sesiones distintas.
+        id: planEx ? planEx.id : slugId(name),
+        name,
         notes: '',
         series: (Array.isArray(ex.series) ? ex.series : []).slice(0, LIMITS.series).map((s, k) => v1Series(s, k, planEx)),
       };
@@ -429,6 +443,7 @@ export function fromV1Sessions(list) {
 // DraftSeries   = Series + rest (segundos de descanso tras la serie; 0 = sin descanso)
 // El borrador es autodescriptivo: se pueden añadir/quitar series, reordenar y sustituir
 // ejercicios sin que el índice siga alineado con el plan.
+// Único límite de descanso (segundos): editor del plan, ajuste, descanso por ejercicio y temporizador.
 export const MAX_REST = 3600;
 
 function blankSeries(planSerie) {
@@ -665,14 +680,20 @@ export function setNote(draft, exIdx, raw) {
   return true;
 }
 
+// total: series del borrador. filled: series con algún valor. missing: series sin ningún valor.
+// unchecked: series con valores pero sin ✓; al guardar no cuentan (récords, volumen ni sobrecarga).
 export function draftStats(draft) {
   let total = 0;
   let filled = 0;
+  let unchecked = 0;
   (draft ? draft.exercises : []).forEach(ex => ex.series.forEach(s => {
     total += 1;
-    if (hasValues(s)) filled += 1;
+    if (hasValues(s)) {
+      filled += 1;
+      if (!s.done) unchecked += 1;
+    }
   }));
-  return { total, filled, missing: total - filled };
+  return { total, filled, missing: total - filled, unchecked };
 }
 
 // Convierte el borrador en una sesión v2 validada. Devuelve { ok, session } | { ok:false, error }.
@@ -692,7 +713,7 @@ export function finalizeDraft(draft, now = Date.now()) {
       notes: ex.notes,
       series: ex.series.map(s => ({
         type: s.type, target: s.target, weight: s.weight, weight2: s.weight2,
-        repsDone: s.repsDone, rpe: s.rpe, done: hasValues(s),
+        repsDone: s.repsDone, rpe: s.rpe, done: !!s.done && hasValues(s),
       })),
     })),
   });

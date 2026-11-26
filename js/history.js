@@ -7,7 +7,7 @@ import { kgToDisplay, unitLabel, fmtWeightNum } from './units.js';
 import { muscleVolume, undertrained, MIN_WEEKLY_SETS } from './progress.js';
 import {
   listExercises, exerciseProgress, exerciseBests, weeklyStats, weekStreaks, calendarMonth,
-  buildWeeklySummary, bodySeries, fmtKg, pairsWeightReps, addWeeks, weekStart, keyToTs,
+  buildWeeklySummary, bodySeries, fmtKg, displayWeight, pairsWeightReps, todayKey, addWeeks, weekStart, keyToTs,
 } from './stats.js';
 
 export const TABS = [
@@ -37,13 +37,24 @@ function card(title, ...children) {
   return h('section', { class: 'stat-card' }, h('div', { class: 'stat-title' }, title), ...children);
 }
 
+// Texto normalizado de cada sesión, calculado una vez (las sesiones no cambian): normalizar miles de
+// textos en cada tecla era el grueso del coste de buscar.
+const searchTexts = new WeakMap();
+
+function searchText(s) {
+  let text = searchTexts.get(s);
+  if (text === undefined) {
+    text = [s.name, s.notes, ...s.exercises.flatMap(ex => [ex.name, ex.notes])].map(norm).join('\n');
+    searchTexts.set(s, text);
+  }
+  return text;
+}
+
 export function filterSessions(sessions, search, plan) {
   const q = norm(search || '').trim();
   return sessions.filter(s => {
     if (plan && s.planSessionId !== plan) return false;
-    if (!q) return true;
-    return norm(s.name).includes(q) || norm(s.notes).includes(q)
-      || s.exercises.some(ex => norm(ex.name).includes(q) || norm(ex.notes).includes(q));
+    return !q || searchText(s).includes(q);
   });
 }
 
@@ -52,7 +63,7 @@ function bestsGrid(b) {
   const cell = (label, value) => h('div', { class: 'best-cell' }, h('div', { class: 'best-value' }, value), h('div', { class: 'best-label' }, label));
   return h('div', { class: 'best-grid' },
     cell('Peso máx.', `${fmtWeightNum(b.weight)} ${unitLabel()}`),
-    cell('1RM estimado', `${fmtWeightNum(b.oneRM)} ${unitLabel()}`),
+    cell('1RM estimado', b.oneRM > 0 ? `${displayWeight(b.oneRM)} ${unitLabel()}` : '—'),
     cell('Reps máx.', String(b.maxReps)),
     cell('Volumen máx.', `${fmtKg(b.volume)} ${unitLabel()}`),
   );
@@ -71,7 +82,7 @@ function exerciseDetail(state, data) {
     if (bests && progress.length) {
       out.push(card('Mejores marcas', bestsGrid(bests)));
       const chart = lineChart([
-        { name: '1RM estimado', cls: 'series-a', points: progress.map(p => ({ x: p.ts, y: Math.round(kgToDisplay(p.best1RM) * 10) / 10 })) },
+        { name: '1RM estimado', cls: 'series-a', points: progress.filter(p => p.best1RM !== null).map(p => ({ x: p.ts, y: displayWeight(p.best1RM) })) },
         { name: 'Peso máximo', cls: 'series-b', points: progress.map(p => ({ x: p.ts, y: kgToDisplay(p.topWeight) })) },
       ], { title: `Progresión de ${info.name}`, xLabel: shortDay });
       out.push(card(`Progresión (${unitLabel()})`, chart, h('div', { class: 'chart-legend' },
@@ -107,7 +118,7 @@ function exerciseList(state, data) {
     return h('button', { class: 'list-row', dataset: { action: 'select-exercise', id: e.id } },
       h('span', { class: 'list-main' }, h('span', { class: 'list-title' }, e.name),
         h('span', { class: 'list-sub' }, `${e.sessions} ${e.sessions === 1 ? 'sesión' : 'sesiones'} · último ${formatDate(e.last)}`)),
-      h('span', { class: 'list-side' }, bests ? `${fmtWeightNum(bests.oneRM)} ${unitLabel()}` : ''),
+      h('span', { class: 'list-side' }, bests && bests.oneRM > 0 ? `${displayWeight(bests.oneRM)} ${unitLabel()}` : ''),
     );
   });
 }
@@ -143,8 +154,7 @@ function trends(state, data, now) {
 function calendar(state, data, now) {
   const weeks = calendarMonth(data.sessions, state.calYear, state.calMonth);
   const streak = weekStreaks(data.sessions, now);
-  const today = new Date(now);
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const today = todayKey(now);
   let inMonth = 0;
   weeks.flat().forEach(c => { if (c) inMonth += c.count; });
   return [
@@ -156,7 +166,7 @@ function calendar(state, data, now) {
     h('div', { class: 'cal-grid cal-head' }, WEEKDAYS.map(d => h('div', { class: 'cal-wd' }, d))),
     h('div', { class: 'cal-grid', role: 'grid', id: 'cal-grid' }, weeks.flat().map(c => c
       ? h('div', {
-        class: 'cal-day' + (c.count ? ' has' : '') + (c.key === todayKey ? ' today' : ''),
+        class: 'cal-day' + (c.count ? ' has' : '') + (c.key === today ? ' today' : ''),
         dataset: { date: c.key, count: String(c.count) },
         'aria-label': c.count ? `${c.day}: ${c.count} ${c.count === 1 ? 'sesión' : 'sesiones'}` : String(c.day),
       }, String(c.day))
@@ -229,11 +239,11 @@ function body(data) {
 }
 
 // ==================== ENTRADA ====================
-// state: { tab, search, plan, exerciseId, calYear, calMonth, weekOffset }
+// state: { tab, search, plan, limit, exerciseId, calYear, calMonth, weekOffset }
 export function renderHistoryView(container, state, data, expandedIds, now = Date.now()) {
   if (state.tab === 'sessions') {
     const filtered = !!(state.search || state.plan);
-    renderHistory(container, filterSessions(data.sessions, state.search, state.plan), expandedIds, filtered);
+    renderHistory(container, filterSessions(data.sessions, state.search, state.plan), expandedIds, filtered, state.limit);
   } else if (state.tab === 'exercises') {
     container.replaceChildren(...(state.exerciseId ? exerciseDetail(state, data) : exerciseList(state, data)));
   } else if (state.tab === 'trends') {

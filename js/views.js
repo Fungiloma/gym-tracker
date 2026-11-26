@@ -284,8 +284,41 @@ export function formatDate(ts) {
   return new Date(ts).toLocaleDateString('es-ES');
 }
 
+export const HISTORY_PAGE = 50;
+
+function sessionCard(session, expanded) {
+  const id = session.id;
+  const volume = sessionVolume(session);
+  return h('div', { class: 'session-card' + (expanded ? ' expanded' : ''), dataset: { id } },
+    h('div', { class: 'session-header', dataset: { action: 'toggle-expand', id } },
+      h('div', { class: 'session-info' },
+        h('div', { class: 'session-title' }, session.name),
+        h('div', { class: 'session-date' }, formatDate(session.startedAt)),
+        volume > 0 ? h('div', { class: 'session-volume' }, `${fmtKg(volume)} ${unitLabel()} de volumen`) : null,
+      ),
+      h('div', { class: 'session-actions' },
+        h('button', { class: 'btn-delete', title: 'Borrar sesión', 'aria-label': 'Borrar sesión', dataset: { action: 'delete-session', id } }, '🗑'),
+        h('button', { class: 'btn-expand', 'aria-label': 'Ver detalle' }, '▼'),
+      ),
+    ),
+    h('div', { class: 'session-details' },
+      session.notes ? h('div', { class: 'session-notes' }, session.notes) : null,
+      session.exercises.map(ex => {
+        const fields = fieldsForExerciseId(ex.id);
+        return h('div', { class: 'exercise-item' },
+          h('div', { class: 'exercise-name' }, ex.name),
+          ex.notes ? h('div', { class: 'exercise-notes' }, ex.notes) : null,
+          ex.series.map((s, i) => h('div', { class: 'series-line' }, formatSeriesLine(s, i, fields))),
+        );
+      }),
+    ),
+  );
+}
+
 // filtered: hay búsqueda o filtro activo, así que una lista vacía no significa "sin historial".
-export function renderHistory(container, sessions, expandedIds, filtered = false) {
+// limit: tarjetas visibles (el resto, tras un botón "Ver más"): con miles de sesiones pintarlas todas
+// bloquea el móvil.
+export function renderHistory(container, sessions, expandedIds, filtered = false, limit = HISTORY_PAGE) {
   if (sessions.length === 0) {
     container.replaceChildren(h('div', { class: 'empty-state' },
       h('div', { class: 'empty-state-emoji' }, filtered ? '🔍' : '📋'),
@@ -296,34 +329,12 @@ export function renderHistory(container, sessions, expandedIds, filtered = false
   }
 
   const sorted = [...sessions].sort((a, b) => b.startedAt - a.startedAt);
-  container.replaceChildren(...sorted.map(session => {
-    const id = session.id;
-    const expanded = expandedIds.includes(id);
-    return h('div', { class: 'session-card' + (expanded ? ' expanded' : ''), dataset: { id } },
-      h('div', { class: 'session-header', dataset: { action: 'toggle-expand', id } },
-        h('div', { class: 'session-info' },
-          h('div', { class: 'session-title' }, session.name),
-          h('div', { class: 'session-date' }, formatDate(session.startedAt)),
-          sessionVolume(session) > 0 ? h('div', { class: 'session-volume' }, `${fmtKg(sessionVolume(session))} ${unitLabel()} de volumen`) : null,
-        ),
-        h('div', { class: 'session-actions' },
-          h('button', { class: 'btn-delete', title: 'Borrar sesión', 'aria-label': 'Borrar sesión', dataset: { action: 'delete-session', id } }, '🗑'),
-          h('button', { class: 'btn-expand', 'aria-label': 'Ver detalle' }, '▼'),
-        ),
-      ),
-      h('div', { class: 'session-details' },
-        session.notes ? h('div', { class: 'session-notes' }, session.notes) : null,
-        session.exercises.map(ex => {
-          const fields = fieldsForExerciseId(ex.id);
-          return h('div', { class: 'exercise-item' },
-            h('div', { class: 'exercise-name' }, ex.name),
-            ex.notes ? h('div', { class: 'exercise-notes' }, ex.notes) : null,
-            ex.series.map((s, i) => h('div', { class: 'series-line' }, formatSeriesLine(s, i, fields))),
-          );
-        }),
-      ),
-    );
-  }));
+  const shown = sorted.slice(0, limit);
+  const rest = sorted.length - shown.length;
+  const expanded = new Set(expandedIds);
+  container.replaceChildren(...shown.map(session => sessionCard(session, expanded.has(session.id))),
+    ...(rest > 0 ? [h('button', { class: 'btn btn-secondary mt-10', id: 'history-more', dataset: { action: 'history-more' } },
+      `Ver ${Math.min(HISTORY_PAGE, rest)} más (${shown.length} de ${sorted.length})`)] : []));
 }
 
 // ==================== IMPORT ====================

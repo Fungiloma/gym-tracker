@@ -2,8 +2,9 @@
 // timer = { duration, endTs, paused, remaining, label }
 // Funciones puras salvo los avisos (sonido, vibración), que tocan APIs del navegador.
 
+import { MAX_REST } from './data.js';
+
 export const RING_CIRCUMFERENCE = 43.98; // 2 * PI * 7
-export const MAX_TIMER = 3600;
 
 export function formatRest(seconds) {
   if (seconds >= 60) {
@@ -58,10 +59,10 @@ export function toggleTimer(timer, now) {
 // si es 0, el descanso se da por terminado. La duración crece si lo restante la supera.
 export function adjustTimer(timer, deltaSec, now) {
   const current = timer.paused ? timer.remaining : remainingAt(timer, now);
-  const next = Math.min(MAX_TIMER, Math.max(0, current + deltaSec));
+  const next = Math.min(MAX_REST, Math.max(0, current + deltaSec));
   timer.remaining = next;
   if (!timer.paused) timer.endTs = now + next * 1000;
-  timer.duration = Math.min(MAX_TIMER, Math.max(timer.duration, next));
+  timer.duration = Math.min(MAX_REST, Math.max(timer.duration, next));
   return next;
 }
 
@@ -69,8 +70,8 @@ export function adjustTimer(timer, deltaSec, now) {
 export function sanitizeTimer(t) {
   if (!t || typeof t !== 'object') return null;
   const { duration, endTs, remaining } = t;
-  if (![duration, endTs, remaining].every(Number.isFinite) || duration <= 0 || duration > MAX_TIMER) return null;
-  if (remaining < 0 || remaining > MAX_TIMER) return null;
+  if (![duration, endTs, remaining].every(Number.isFinite) || duration <= 0 || duration > MAX_REST) return null;
+  if (remaining < 0 || remaining > MAX_REST) return null;
   return { duration, endTs, paused: t.paused === true, remaining, label: typeof t.label === 'string' ? t.label.slice(0, 80) : '' };
 }
 

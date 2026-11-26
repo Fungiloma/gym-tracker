@@ -105,7 +105,7 @@ export const BADGE = {
   circuit:     { label: 'Circuito' },
 };
 
-const clone = v => JSON.parse(JSON.stringify(v));
+export const clone = v => JSON.parse(JSON.stringify(v));
 
 // Convierte la forma antigua (ejercicios completos dentro de cada sesión) en biblioteca + rutinas.
 function fromLegacy(list) {
@@ -135,6 +135,13 @@ export function defaultPlan() {
 let active = null;
 let library = new Map();
 let routines = [];
+// Cada plan nuevo sube la revisión: invalida las cachés derivadas (findPlanExercise y fieldsForExerciseId).
+let revision = 0;
+let exerciseCache = new Map();
+
+export function planRevision() {
+  return revision;
+}
 
 // Vista de una rutina: { id, name, emoji, duration, archived, exercises: [{ ...biblioteca, series, note }] }.
 function resolveRoutine(r) {
@@ -152,6 +159,8 @@ export function setActivePlan(plan) {
   active = plan;
   library = new Map(plan.exercises.map(e => [e.id, e]));
   routines = plan.routines.map(resolveRoutine);
+  revision += 1;
+  exerciseCache = new Map();
 }
 
 export function getActivePlan() {
@@ -195,7 +204,15 @@ export function findPlanSessionByName(name) {
 
 // Ejercicio por id con series y nota de la primera rutina activa que lo usa (o de una archivada).
 // Si no está en ninguna rutina, series vacías. null si no está en la biblioteca.
+// Memorizado por versión del plan: el historial la consulta por cada ejercicio de cada sesión.
 export function findPlanExercise(id) {
+  if (exerciseCache.has(id)) return exerciseCache.get(id);
+  const found = lookupPlanExercise(id);
+  exerciseCache.set(id, found);
+  return found;
+}
+
+function lookupPlanExercise(id) {
   const lib = library.get(id);
   if (!lib) return null;
   const inRoutine = r => r.exercises.find(e => e.id === id);
