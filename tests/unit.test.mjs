@@ -4,18 +4,21 @@ import { planSessions, getPlanSession, fieldsFor, findPlanExercise } from '../js
 const PLAN = planSessions();
 import {
   KEYS, V1_KEYS, LEGACY_KEYS, loadData, saveData, loadDraft, saveDraft, clearDraft, loadUi, saveUi,
+  loadDraftState, loadPlan, unlockData, isDataLocked, clearDraftBackup,
 } from '../js/storage.js';
 import {
   formatRest, formatRemaining, ringOffset, remainingAt, createTimer, toggleTimer, adjustTimer, sanitizeTimer, formatElapsed, RING_CIRCUMFERENCE,
 } from '../js/timers.js';
 import { createDraft, setDraftValue } from '../js/data.js';
 
-function memoryStorage(initial = {}, { quota = false } = {}) {
+// limit: caracteres totales que caben (como la cuota de localStorage); quota: no cabe nada.
+function memoryStorage(initial = {}, { quota = false, limit = Infinity } = {}) {
   const data = new Map(Object.entries(initial));
+  const size = () => [...data.values()].reduce((n, v) => n + v.length, 0);
   return {
     getItem: k => (data.has(k) ? data.get(k) : null),
     setItem: (k, v) => {
-      if (quota) {
+      if (quota || size() - (data.get(k) || '').length + String(v).length > limit) {
         const e = new Error('full');
         e.name = 'QuotaExceededError';
         throw e;
@@ -76,7 +79,107 @@ test('loadData: datos dañados se copian a backup y no se pierden', () => {
   assert.ok(st2.dump()[KEYS.backup], 'sesiones rechazadas: se guarda copia');
 
   assert.equal(loadData(memoryStorage({ [KEYS.data]: '[]' })).source, 'corrupt');
-  assert.equal(loadData(memoryStorage({ [KEYS.data]: '{"schemaVersion":3,"sessions":[]}' })).source, 'corrupt');
+  assert.equal(loadData(memoryStorage({ [KEYS.data]: '{"schemaVersion":3,"sessions":[]}' })).source, 'newer');
+});
+
+test('loadData: dañado sin sitio para la copia bloquea saveData y no sobrescribe el original', () => {
+  // El original ocupa más de la mitad de la cuota: la copia en gymtracker.data.backup no cabe.
+  const raw = '{"schemaVersion":2,"sessions":[' + 'x'.repeat(600);
+  const st = memoryStorage({ [KEYS.data]: raw }, { limit: 1000 });
+  const r = loadData(st);
+  assert.equal(r.source, 'corrupt');
+  assert.equal(r.backup.ok, false);
+  assert.equal(r.backup.quota, true);
+  assert.equal(r.locked, true);
+  assert.equal(r.raw, raw, 'el texto original vuelve para poder descargarlo');
+  assert.equal(st.dump()[KEYS.backup], undefined);
+  const w = saveData({ schemaVersion: 2, sessions: [], body: [], settings: {} }, st);
+  assert.deepEqual(w, { ok: false, quota: false, locked: true });
+  assert.equal(st.dump()[KEYS.data], raw, 'el original sigue intacto tras intentar guardar');
+  assert.equal(isDataLocked(st), true);
+  unlockData(st);
+  assert.deepEqual(saveData({ schemaVersion: 2, sessions: [], body: [], settings: {} }, st), { ok: true });
+});
+
+test('loadData: dañado con copia también bloquea; datos válidos no bloquean', () => {
+  const st = memoryStorage({ [KEYS.data]: '{roto' });
+  const r = loadData(st);
+  assert.equal(r.backup.ok, true);
+  assert.equal(r.locked, true);
+  assert.equal(saveData({ schemaVersion: 2, sessions: [], settings: {} }, st).locked, true);
+  assert.equal(st.dump()[KEYS.data], '{roto');
+
+  const ok = memoryStorage({ [KEYS.data]: JSON.stringify({ schemaVersion: 2, sessions: [], settings: {} }) });
+  const r2 = loadData(ok);
+  assert.equal(r2.locked, false);
+  assert.equal(r2.backup, null);
+  assert.deepEqual(saveData({ schemaVersion: 2, sessions: [], settings: {} }, ok), { ok: true });
+});
+
+test('loadData: schemaVersion mayor es versión más nueva, no dañado, y bloquea la escritura', () => {
+  const raw = '{"schemaVersion":3,"sessions":[{"nuevo":true}]}';
+  const st = memoryStorage({ [KEYS.data]: raw });
+  const r = loadData(st);
+  assert.equal(r.source, 'newer');
+  assert.equal(r.locked, true);
+  assert.equal(st.dump()[KEYS.backup], raw);
+  assert.equal(saveData({ schemaVersion: 2, sessions: [], settings: {} }, st).locked, true);
+  assert.equal(st.dump()[KEYS.data], raw);
+});
+
+test('loadData: registros apartados bloquean solo si la copia falla', () => {
+  const raw = '{"schemaVersion":2,"sessions":[{"id":"x"}],"pad":"' + 'p'.repeat(600) + '"}';
+  const withRoom = loadData(memoryStorage({ [KEYS.data]: raw }));
+  assert.equal(withRoom.source, 'v2');
+  assert.equal(withRoom.backup.ok, true);
+  assert.equal(withRoom.locked, false);
+  const st = memoryStorage({ [KEYS.data]: raw }, { limit: 1000 });
+  const full = loadData(st);
+  assert.equal(full.rejected.length, 1);
+  assert.equal(full.backup.ok, false);
+  assert.equal(full.locked, true);
+  assert.equal(saveData(full.data, st).locked, true);
+  assert.equal(st.dump()[KEYS.data], raw);
+});
+
+test('loadPlan: informa de si la copia del plan dañado se pudo hacer', () => {
+  const ok = loadPlan(memoryStorage({ [KEYS.plan]: '{roto' }));
+  assert.equal(ok.source, 'corrupt');
+  assert.equal(ok.backup.ok, true);
+  const full = loadPlan(memoryStorage({ [KEYS.plan]: '{roto' }, { quota: true }));
+  assert.equal(full.backup.ok, false);
+});
+
+test('loadDraftState: borrador de una rutina que ya no está en el plan se copia y se informa', () => {
+  const raw = JSON.stringify({
+    schemaVersion: 2, id: 'd1', planSessionId: 'mi-rutina', startedAt: Date.UTC(2026, 0, 1), notes: 'nota',
+    exercises: [{ id: 'mi-ejercicio', name: 'Mi ejercicio', notes: '', series: [{ weight: 50, repsDone: 8, done: true }] }],
+  });
+  const st = memoryStorage({ [KEYS.draft]: raw });
+  const r = loadDraftState(st);
+  assert.equal(r.draft, null);
+  assert.equal(r.lost.raw, raw);
+  assert.equal(r.lost.backup.ok, true);
+  assert.equal(st.dump()[KEYS.draftBackup], raw);
+  assert.equal(st.dump()[KEYS.draft], raw, 'el borrador original no se borra al cargar');
+  assert.equal(loadDraft(st), null);
+
+  const full = loadDraftState(memoryStorage({ [KEYS.draft]: raw }, { quota: true }));
+  assert.equal(full.lost.backup.ok, false);
+
+  // Con otro borrador válido ya en gymtracker.draft, la copia sigue apareciendo hasta borrarla.
+  const later = memoryStorage({ [KEYS.draft]: JSON.stringify(createDraft(P1.id, Date.UTC(2026, 0, 2))), [KEYS.draftBackup]: raw });
+  const r2 = loadDraftState(later);
+  assert.ok(r2.draft);
+  assert.equal(r2.lost.raw, raw);
+  clearDraftBackup(later);
+  assert.equal(loadDraftState(later).lost, null);
+
+  assert.deepEqual(loadDraftState(memoryStorage()), { draft: null, lost: null });
+  const d = createDraft(P1.id, Date.UTC(2026, 0, 1));
+  const good = loadDraftState(memoryStorage({ [KEYS.draft]: JSON.stringify(d) }));
+  assert.equal(good.lost, null);
+  assert.equal(good.draft.id, d.id);
 });
 
 test('saveData escribe solo la clave v2, no toca las v1 e informa de cuota llena', () => {

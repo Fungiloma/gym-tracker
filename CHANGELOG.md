@@ -2,6 +2,14 @@
 
 Cambios por fase del plan de auditoría ([docs/PLAN-AUDITORIA.md](docs/PLAN-AUDITORIA.md)). El historial de commits es la fuente definitiva.
 
+## Fase 10a. Integridad de datos
+
+- Datos dañados o de una versión más nueva: no se escribe en `gymtracker.data` hasta descargar el original; el aviso solo habla de copia si se hizo.
+- Borrar en el historial: un doble toque borra una sola sesión o medida, y los borrados seguidos se deshacen juntos.
+- El último valor tecleado en kg o reps se guarda al pasar la app a segundo plano.
+- Una sesión en curso cuya rutina ya no está en el plan se copia a `gymtracker.draft.backup` y se puede descargar.
+- Detalle en [docs/REVISION-CODIGO.md](docs/REVISION-CODIGO.md).
+
 ## Fase 9. Documentación y gobierno
 
 - README reescrito con las funciones reales, copias de seguridad de historial y de plan por separado, y lo que la app no hace.

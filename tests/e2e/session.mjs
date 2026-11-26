@@ -295,6 +295,7 @@ try {
   await page.locator('.session-card [data-action="delete-session"]').click();
   assert.equal(await page.locator('.session-card').count(), 0);
   assert.equal((await ls('gymtracker.data')).sessions.length, 0);
+  await page.waitForTimeout(450); // tras borrar, Deshacer se ignora 400 ms (doble toque)
   await toast.locator('[data-action="toast-undo"]').click();
   assert.equal(await page.locator('.session-card').count(), 1);
   assert.equal((await ls('gymtracker.data')).sessions.length, 1);

@@ -43,7 +43,10 @@ Para cambiar de móvil o proteger los datos, exporta ambos. Desinstalar la app o
 | `gymtracker.draft` | Sesión en curso |
 | `gymtracker.ui` | Estado de interfaz: descanso activo, descansos por ejercicio, tarjetas expandidas |
 | `gymtracker.plan` | Plan editado o importado; si no existe se usa el de por defecto |
-| `gymtracker.data.backup`, `gymtracker.plan.backup` | Copia literal si el contenido estaba dañado, antes de que nada lo sobrescriba |
+| `gymtracker.data.backup`, `gymtracker.plan.backup` | Copia literal si el contenido estaba dañado (o era de una versión más nueva), si cabe en el almacenamiento |
+| `gymtracker.draft.backup` | Copia literal de una sesión en curso cuya rutina ya no está en el plan, hasta que la descargas |
+
+Si `gymtracker.data` no se puede leer, la app muestra un aviso fijo con "Descargar copia" y no escribe nada en el historial hasta que descargas el original y confirmas. Así ni una copia que no cupo ni volver a una versión anterior de la app pueden borrar el historial.
 | `gymtracker.sessions`, `gymtracker.state`, `gym-sessions`, `gym-state` | Claves antiguas: solo se leen, nunca se escriben ni se borran |
 
 ## Sin conexión y actualizaciones
