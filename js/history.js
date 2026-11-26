@@ -7,7 +7,7 @@ import { kgToDisplay, unitLabel, fmtWeightNum } from './units.js';
 import { muscleVolume, undertrained, MIN_WEEKLY_SETS } from './progress.js';
 import {
   listExercises, exerciseProgress, exerciseBests, weeklyStats, weekStreaks, calendarMonth,
-  buildWeeklySummary, bodySeries, fmtKg, displayWeight, pairsWeightReps, addWeeks, weekStart, keyToTs,
+  buildWeeklySummary, bodySeries, fmtKg, displayWeight, pairsWeightReps, todayKey, addWeeks, weekStart, keyToTs,
 } from './stats.js';
 
 export const TABS = [
@@ -154,8 +154,7 @@ function trends(state, data, now) {
 function calendar(state, data, now) {
   const weeks = calendarMonth(data.sessions, state.calYear, state.calMonth);
   const streak = weekStreaks(data.sessions, now);
-  const today = new Date(now);
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const today = todayKey(now);
   let inMonth = 0;
   weeks.flat().forEach(c => { if (c) inMonth += c.count; });
   return [
@@ -167,7 +166,7 @@ function calendar(state, data, now) {
     h('div', { class: 'cal-grid cal-head' }, WEEKDAYS.map(d => h('div', { class: 'cal-wd' }, d))),
     h('div', { class: 'cal-grid', role: 'grid', id: 'cal-grid' }, weeks.flat().map(c => c
       ? h('div', {
-        class: 'cal-day' + (c.count ? ' has' : '') + (c.key === todayKey ? ' today' : ''),
+        class: 'cal-day' + (c.count ? ' has' : '') + (c.key === today ? ' today' : ''),
         dataset: { date: c.key, count: String(c.count) },
         'aria-label': c.count ? `${c.day}: ${c.count} ${c.count === 1 ? 'sesión' : 'sesiones'}` : String(c.day),
       }, String(c.day))

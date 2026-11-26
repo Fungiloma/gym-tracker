@@ -8,7 +8,7 @@ import {
   substituteExercise, setNote, defaultRest, restForSeries, MAX_REST,
   getSettings, applySetting, fieldsForExerciseId,
 } from './data.js';
-import { setUnit, getUnit, unitLabel, inputToKg, kgToDisplay, progressionStepKg } from './units.js';
+import { setUnit, unitLabel, inputToKg, kgToDisplay, progressionStepKg } from './units.js';
 import { registerServiceWorker, shortcutIndex, hasShortcutParam } from './pwa.js';
 import { suggestOverload, deloadNotices } from './progress.js';
 import { renderSettings, renderPlates, renderPlateResult, readPlatesForm, defaultBarKg, defaultPlatesKg } from './tools.js';
@@ -29,7 +29,7 @@ import {
   removeExercise, restoreExercise, PLAN_LIMITS,
 } from './routines.js';
 import { renderRoutines, renderRoutineEditor, renderLibrary } from './editor.js';
-import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, dayKey } from './stats.js';
+import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, dayKey, shiftMonth } from './stats.js';
 
 // ==================== STATE ====================
 // data: datos persistentes (gymtracker.data). draft: sesión en curso (gymtracker.draft).
@@ -990,9 +990,9 @@ function setHistoryTab(tab) {
 }
 
 function shiftCalendar(delta) {
-  const d = new Date(view.calYear, view.calMonth + delta, 1);
-  view.calYear = d.getFullYear();
-  view.calMonth = d.getMonth();
+  const next = shiftMonth(view.calYear, view.calMonth, delta);
+  view.calYear = next.year;
+  view.calMonth = next.month;
   renderHistoryScreen();
 }
 
