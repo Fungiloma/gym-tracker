@@ -16,9 +16,9 @@ En iOS (Safari, "Añadir a pantalla de inicio") debería funcionar, pero no se p
 
 **Registro rápido.** Elige una rutina en la pantalla principal. Cada serie tiene peso y repeticiones (admite coma decimal) y un check: al marcarla arranca el descanso. Si la serie estaba vacía, copia la de encima. Una serie solo cuenta como hecha, y por tanto para volumen, récords y sobrecarga, si está marcada con ✓: al guardar, la app avisa de las series con valores sin marcar y deja volver a la sesión o guardar igualmente (los valores se conservan). La columna "Anterior" muestra la última sesión de esa rutina y se puede tocar para reutilizarla. Puedes añadir o quitar series, mover o sustituir ejercicios, escribir notas por ejercicio y por sesión, y deshacer un borrado durante unos segundos. Hay un modo guiado de un ejercicio por pantalla. La sesión en curso se guarda como borrador y se reanuda si cierras la app. Se pide mantener la pantalla encendida (Wake Lock) mientras la sesión está abierta, si el navegador lo permite. El botón Atrás de Android navega por la app.
 
-**Descanso.** Una única barra fija abajo con ±15 s, pausa y saltar. Cada ejercicio tiene su descanso, ajustable. Al terminar suena un pitido y vibra, según Ajustes. El descanso se calcula con la hora de inicio, así que se recupera al volver a la app tras el segundo plano.
+**Descanso.** Una única barra fija abajo con ±15 s, pausa y saltar; el máximo es 60 min en todas partes (editor del plan, ajustes, ejercicio y barra). Cada ejercicio tiene su descanso, ajustable. Al terminar suena un pitido y vibra, según Ajustes. El descanso se calcula con la hora de inicio, así que se recupera al volver a la app tras el segundo plano.
 
-**Historial y análisis** (pantalla Historial, seis pestañas): Sesiones, Ejercicios (1RM estimado con Epley, mejores marcas y récords), Gráficas (volumen semanal en SVG), Músculos (series por grupo y semana), Calendario (con rachas semanales) y Cuerpo (peso corporal opcional). Hay búsqueda y filtro por rutina, y un resumen semanal copiable. Al terminar una sesión se copia un resumen de texto o se genera una imagen para compartir con el menú del sistema.
+**Historial y análisis** (pantalla Historial, seis pestañas): Sesiones, Ejercicios (1RM estimado con Epley, mejores marcas y récords), Gráficas (volumen semanal en SVG), Músculos (series por grupo y semana), Calendario (con rachas semanales) y Cuerpo (peso corporal opcional). En Inicio sale un aviso al pasar del 70 % de la cuota estimada de localStorage (unos 5 millones de caracteres; es una estimación, el navegador no la expone). El historial muestra las sesiones de 50 en 50 ("Ver más"), la búsqueda espera 200 ms tras la última tecla y un récord de repeticiones exige una serie previa con el mismo peso. Hay búsqueda y filtro por rutina, y un resumen semanal copiable. Al terminar una sesión se copia un resumen de texto o se genera una imagen para compartir con el menú del sistema.
 
 **Progresión.** Sugerencia de subir carga (2,5 kg o 5 lb) cuando en la última sesión de un ejercicio con rango de repeticiones (por ejemplo 8-10) se hicieron todas las series y todas llegaron al tope. Aviso de descarga tras 6 semanas seguidas entrenando, o si el 1RM estimado cae por debajo del 95 % del mejor reciente en las dos últimas sesiones. Aviso de grupos con menos de 6 series semanales. Son reglas fijas y orientativas, desactivables en Ajustes; no son asesoramiento médico ni un plan personalizado.
 
@@ -70,6 +70,7 @@ Requiere Node 22. No hay dependencias que instalar para `check` y `test`.
 npm run check   # sintaxis, referencias del manifiesto y del shell
 npm test        # tests unitarios (node --test)
 npm run e2e     # E2E con Playwright en Chromium (necesita Playwright instalado)
+npm run bench   # mide el historial con 2.000 sesiones sembradas y CPU x4 (necesita Playwright)
 python -m http.server 8000   # servir en http://localhost:8000
 ```
 
