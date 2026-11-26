@@ -1081,3 +1081,19 @@ header .header-subtitle {
   z-index: 110;
 }
 .update-banner[hidden] { display: none; }
+
+/* Fase 10a: aviso fijo de recuperación (dentro de #app, encima de la pantalla activa) */
+.recovery-banner {
+  flex-shrink: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
+  background: var(--toast-error-bg);
+  border-bottom: 1px solid var(--danger);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.recovery-banner[hidden] { display: none; }
+.recovery-item + .recovery-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.recovery-text { margin: 0 0 8px; }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; }

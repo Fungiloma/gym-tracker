@@ -1,7 +1,7 @@
 // Service worker de Gym Tracker. Todas las rutas son relativas al scope del SW,
 // así funciona igual en un subdirectorio (GitHub Pages) que en la raíz (servidor local).
 // Al cambiar cualquier fichero del shell, sube CACHE_VERSION: es el único sitio donde vive la versión.
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 const CACHE_NAME = `gym-tracker-${CACHE_VERSION}`;
 const NETWORK_TIMEOUT_MS = 3000;
 

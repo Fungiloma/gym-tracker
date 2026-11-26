@@ -129,22 +129,22 @@ async function updateScenario(browser, url) {
   await page.waitForSelector('.session-btn');
   await swControlling(page);
   assert.equal(await page.locator('#update-banner').isVisible(), false, 'sin aviso en la primera instalación');
-  // Caché antigua de la versión 5 que debe desaparecer al activar.
-  await page.evaluate(() => caches.open('gym-tracker-v5'));
+  // Caché antigua de la versión 6 que debe desaparecer al activar.
+  await page.evaluate(() => caches.open('gym-tracker-v6'));
   const swPath = join(updRoot, 'sw.js');
-  writeFileSync(swPath, readFileSync(swPath, 'utf8').replace("const CACHE_VERSION = 'v6'", "const CACHE_VERSION = 'v7'"));
+  writeFileSync(swPath, readFileSync(swPath, 'utf8').replace("const CACHE_VERSION = 'v7'", "const CACHE_VERSION = 'v8'"));
   await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration()).update(); });
   await page.waitForSelector('#update-banner:not([hidden])', { timeout: 10000 });
   assert.match(await page.locator('#update-banner').textContent(), /Nueva versión disponible/);
   const before = Object.keys(await cacheState(page));
-  assert.ok(before.includes('gym-tracker-v6'), 'la versión actual sigue activa hasta recargar');
+  assert.ok(before.includes('gym-tracker-v7'), 'la versión actual sigue activa hasta recargar');
   const nav = page.waitForNavigation({ waitUntil: 'load' });
   await page.locator('#update-reload').click();
   await nav;
   await page.waitForSelector('.session-btn');
-  await page.waitForFunction(async () => (await caches.keys()).join() === 'gym-tracker-v7', null, { timeout: 10000 });
+  await page.waitForFunction(async () => (await caches.keys()).join() === 'gym-tracker-v8', null, { timeout: 10000 });
   await context.close();
-  console.log('e2e offline actualización: ok (aviso, recarga y limpieza de gym-tracker-v5 y v6)');
+  console.log('e2e offline actualización: ok (aviso, recarga y limpieza de gym-tracker-v6 y v7)');
 }
 
 let browser;

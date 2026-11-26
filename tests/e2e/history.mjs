@@ -173,6 +173,7 @@ try {
   assert.equal(await view.locator('.body-row').count(), 2);
   await view.locator('.body-row').first().locator('[data-action="delete-body"]').click();
   assert.equal((await ls('gymtracker.data')).body.length, 1);
+  await page.waitForTimeout(450); // tras borrar, Deshacer se ignora 400 ms (doble toque)
   await page.locator('[data-action="toast-undo"]').click();
   assert.equal((await ls('gymtracker.data')).body.length, 2);
   await page.reload();
