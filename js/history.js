@@ -7,7 +7,7 @@ import { kgToDisplay, unitLabel, fmtWeightNum } from './units.js';
 import { muscleVolume, undertrained, MIN_WEEKLY_SETS } from './progress.js';
 import {
   listExercises, exerciseProgress, exerciseBests, weeklyStats, weekStreaks, calendarMonth,
-  buildWeeklySummary, bodySeries, fmtKg, pairsWeightReps, addWeeks, weekStart, keyToTs,
+  buildWeeklySummary, bodySeries, fmtKg, displayWeight, pairsWeightReps, addWeeks, weekStart, keyToTs,
 } from './stats.js';
 
 export const TABS = [
@@ -52,7 +52,7 @@ function bestsGrid(b) {
   const cell = (label, value) => h('div', { class: 'best-cell' }, h('div', { class: 'best-value' }, value), h('div', { class: 'best-label' }, label));
   return h('div', { class: 'best-grid' },
     cell('Peso máx.', `${fmtWeightNum(b.weight)} ${unitLabel()}`),
-    cell('1RM estimado', `${fmtWeightNum(b.oneRM)} ${unitLabel()}`),
+    cell('1RM estimado', b.oneRM > 0 ? `${displayWeight(b.oneRM)} ${unitLabel()}` : '—'),
     cell('Reps máx.', String(b.maxReps)),
     cell('Volumen máx.', `${fmtKg(b.volume)} ${unitLabel()}`),
   );
@@ -71,7 +71,7 @@ function exerciseDetail(state, data) {
     if (bests && progress.length) {
       out.push(card('Mejores marcas', bestsGrid(bests)));
       const chart = lineChart([
-        { name: '1RM estimado', cls: 'series-a', points: progress.map(p => ({ x: p.ts, y: Math.round(kgToDisplay(p.best1RM) * 10) / 10 })) },
+        { name: '1RM estimado', cls: 'series-a', points: progress.filter(p => p.best1RM !== null).map(p => ({ x: p.ts, y: displayWeight(p.best1RM) })) },
         { name: 'Peso máximo', cls: 'series-b', points: progress.map(p => ({ x: p.ts, y: kgToDisplay(p.topWeight) })) },
       ], { title: `Progresión de ${info.name}`, xLabel: shortDay });
       out.push(card(`Progresión (${unitLabel()})`, chart, h('div', { class: 'chart-legend' },
@@ -107,7 +107,7 @@ function exerciseList(state, data) {
     return h('button', { class: 'list-row', dataset: { action: 'select-exercise', id: e.id } },
       h('span', { class: 'list-main' }, h('span', { class: 'list-title' }, e.name),
         h('span', { class: 'list-sub' }, `${e.sessions} ${e.sessions === 1 ? 'sesión' : 'sesiones'} · último ${formatDate(e.last)}`)),
-      h('span', { class: 'list-side' }, bests ? `${fmtWeightNum(bests.oneRM)} ${unitLabel()}` : ''),
+      h('span', { class: 'list-side' }, bests && bests.oneRM > 0 ? `${displayWeight(bests.oneRM)} ${unitLabel()}` : ''),
     );
   });
 }

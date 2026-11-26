@@ -108,3 +108,40 @@ test('bug 4: una serie que ya es récord de peso no genera además uno de repeti
   const only110 = sess(at(2026, 11, 16), [set(110, 12)]);
   assert.ok(!kinds([old], only110).includes('reps'));
 });
+
+// ---------- Bug 11: doble redondeo en récords con lb ----------
+test('bug 11: 225 lb se muestra como 225 y 1100 lb de volumen como 1100', async () => {
+  const { setUnit, lbToKg, kgToDisplay } = await import('../js/units.js');
+  const { formatRecord, exerciseBests, round1 } = await import('../js/stats.js');
+  setUnit('lb');
+  try {
+    const old = sess(at(2026, 11, 2), [set(lbToKg(220), 5), set(lbToKg(200), 5)]);
+    const cur = sess(at(2026, 11, 9), [set(lbToKg(225), 5), set(lbToKg(220), 5)]);
+    const lines = detectRecords([old], cur).map(formatRecord);
+    const w = lines.find(l => l.includes('peso '));
+    assert.match(w, /peso 225 lb \(antes 220\)/);
+    const v = lines.find(l => l.includes('volumen'));
+    assert.match(v, /volumen 2225 lb/);
+    const single = sess(at(2026, 11, 16), [set(lbToKg(225), 1)], 'banca');
+    const bests = exerciseBests([single], 'banca');
+    assert.equal(round1(kgToDisplay(bests.oneRM)), 225, '1RM de una sola repetición = el propio peso');
+    const old2 = sess(at(2026, 11, 2), [set(lbToKg(200), 5)], 'remo');
+    const cur2 = sess(at(2026, 11, 9), [set(lbToKg(220), 5)], 'remo');
+    const vol = detectRecords([old2], cur2).find(r => r.kind === 'volume');
+    assert.match(formatRecord(vol), /volumen 1100 lb \(antes 1000\)/);
+  } finally {
+    setUnit('kg');
+  }
+});
+
+// ---------- Bug 15: la gráfica de 1RM no dibuja un 0 ----------
+test('bug 15: con todas las series por encima de 30 reps no hay 1RM (null, no 0)', async () => {
+  const { exerciseProgress } = await import('../js/stats.js');
+  const hi = sess(at(2026, 11, 2), [set(20, 35), set(20, 40)]);
+  const ok = sess(at(2026, 11, 9), [set(50, 10)]);
+  const p = exerciseProgress([hi, ok], 'prensa');
+  assert.equal(p.length, 2);
+  assert.equal(p[0].best1RM, null);
+  assert.equal(p[0].topWeight, 20, 'el peso máximo sigue contando');
+  assert.ok(p[1].best1RM > 0);
+});
