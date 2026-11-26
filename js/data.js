@@ -665,14 +665,20 @@ export function setNote(draft, exIdx, raw) {
   return true;
 }
 
+// total: series del borrador. filled: series con algún valor. missing: series sin ningún valor.
+// unchecked: series con valores pero sin ✓; al guardar no cuentan (récords, volumen ni sobrecarga).
 export function draftStats(draft) {
   let total = 0;
   let filled = 0;
+  let unchecked = 0;
   (draft ? draft.exercises : []).forEach(ex => ex.series.forEach(s => {
     total += 1;
-    if (hasValues(s)) filled += 1;
+    if (hasValues(s)) {
+      filled += 1;
+      if (!s.done) unchecked += 1;
+    }
   }));
-  return { total, filled, missing: total - filled };
+  return { total, filled, missing: total - filled, unchecked };
 }
 
 // Convierte el borrador en una sesión v2 validada. Devuelve { ok, session } | { ok:false, error }.
@@ -692,7 +698,7 @@ export function finalizeDraft(draft, now = Date.now()) {
       notes: ex.notes,
       series: ex.series.map(s => ({
         type: s.type, target: s.target, weight: s.weight, weight2: s.weight2,
-        repsDone: s.repsDone, rpe: s.rpe, done: hasValues(s),
+        repsDone: s.repsDone, rpe: s.rpe, done: !!s.done && hasValues(s),
       })),
     })),
   });

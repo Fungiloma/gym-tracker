@@ -547,11 +547,17 @@ function discardSession() {
 
 function completeSession() {
   if (!draft) return;
-  const { total, filled, missing } = draftStats(draft);
+  const { total, filled, missing, unchecked } = draftStats(draft);
   if (filled === 0) {
     if (!confirm('No has apuntado ninguna serie. ¿Guardar la sesión vacía igualmente?')) return;
-  } else if (missing > 0) {
-    if (!confirm(`Hay ${missing} de ${total} series sin completar. ¿Guardar igualmente?`)) return;
+  } else if (missing > 0 || unchecked > 0) {
+    // Una serie solo cuenta como hecha con ✓. Aceptar guarda igualmente; cancelar vuelve a la sesión.
+    const lines = [];
+    if (unchecked > 0) {
+      lines.push(`${unchecked} ${unchecked === 1 ? 'serie con valores sin marcar' : 'series con valores sin marcar'} (✓): no cuentan para récords, volumen ni sobrecarga.`);
+    }
+    if (missing > 0) lines.push(`Hay ${missing} de ${total} series sin completar.`);
+    if (!confirm(`${lines.join('\n')}\n¿Guardar igualmente? Cancelar vuelve a la sesión.`)) return;
   }
 
   const r = finalizeDraft(draft);

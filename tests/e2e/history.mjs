@@ -197,6 +197,8 @@ try {
   await kg.dispatchEvent('change');
   await reps.fill('6');
   await reps.dispatchEvent('change');
+  // Sin ✓ la serie no cuenta para récords: se marca.
+  await page.locator('#screen-session [data-action="toggle-series"][data-ex="0"][data-series="0"]').click();
   await page.locator('[data-action="complete-session"]').click();
   await page.waitForSelector('#screen-summary.active');
   const records = page.locator('#summary-records');

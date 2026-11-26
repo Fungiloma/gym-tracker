@@ -154,7 +154,7 @@ test('borrador: crear desde el plan, solo campos declarados y valores validados'
   assert.equal(d.exercises[0].series[0].done, false, 'escribir no marca como hecha');
 
   const total = P1.exercises.reduce((n, e) => n + e.series.length, 0);
-  assert.deepEqual(draftStats(d), { total, filled: 1, missing: total - 1 });
+  assert.deepEqual(draftStats(d), { total, filled: 1, missing: total - 1, unchecked: 1 });
   assert.equal(setDraftValue(d, 0, 0, 'weight', '').ok, true);
   d.exercises[0].series[0].done = true;
   assert.equal(setDraftValue(d, 0, 0, 'repsDone', '').ok, true);
