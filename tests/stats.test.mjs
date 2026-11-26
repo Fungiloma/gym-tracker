@@ -79,10 +79,10 @@ test('récords: peso, reps, 1RM y volumen frente al historial; primera vez no cu
   assert.deepEqual(detectRecords([first], same), [], 'igualar no es batir');
 
   const lighter = sess(at(2026, 11, 16), [ex(id, [s(60, 12)], 'Peso muerto')]);
-  assert.deepEqual(detectRecords([first], lighter).map(r => r.kind), ['reps'], 'más reps que cualquier serie previa con peso igual o mayor');
+  assert.deepEqual(detectRecords([first], lighter), [], 'sin serie previa con el mismo peso no hay récord de reps');
 });
 
-test('récord de reps solo con el mismo peso o más; calentamiento y no hechas no cuentan', () => {
+test('récord de reps solo con el mismo peso; calentamiento y no hechas no cuentan', () => {
   const id = 'prensa';
   const old = sess(at(2026, 11, 2), [ex(id, [s(100, 10)])]);
   const lowerWeightFewerReps = sess(at(2026, 11, 9), [ex(id, [s(80, 9)])]);

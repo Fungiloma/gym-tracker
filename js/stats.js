@@ -8,6 +8,9 @@ import { kgToDisplay, unitLabel } from './units.js';
 
 export const MAX_REPS_1RM = 30;
 const DAY = 86_400_000;
+// Dos pesos son "el mismo" si difieren menos que el redondeo de pasar lb a kg (0,1 lb ≈ 0,045 kg).
+const SAME_WEIGHT_KG = 0.05;
+const sameWeight = (a, b) => Math.abs(a - b) <= SAME_WEIGHT_KG;
 
 // ==================== SERIES ====================
 export function pairsWeightReps(exerciseId) {
@@ -144,7 +147,8 @@ function priorBest(previous, exerciseId) {
 
 // Récords personales de `session` frente a `previous` (sesiones anteriores). Un ejercicio sin historial
 // previo no genera récords: su primera vez solo fija la base. Un récord por tipo y ejercicio.
-// Repeticiones: más reps que cualquier serie previa con el mismo peso o más.
+// Repeticiones: más reps que cualquier serie previa con el MISMO peso (tolerancia de redondeo lb↔kg),
+// sin contar drops y sin repetir una serie que ya es récord de peso.
 // → [{ exerciseId, name, kind, value, previous }]
 export function detectRecords(previous, session) {
   const before = previous.filter(p => p.id !== session.id && p.startedAt < session.startedAt);
@@ -162,15 +166,17 @@ export function detectRecords(previous, session) {
     const oneRM = Math.max(...sets.map(x => epley1RM(x.weight, x.repsDone) ?? 0));
     if (oneRM > best.oneRM) add('oneRM', oneRM, best.oneRM);
 
+    // Repeticiones: solo con una serie previa con el mismo peso (sin drops) y superándola. Una serie que
+    // ya es récord de peso no genera además uno de repeticiones.
     let repsPr = null;
     for (const x of sets) {
-      const beaten = !best.sets.some(p => p.weight >= x.weight && p.repsDone >= x.repsDone);
-      if (beaten && (!repsPr || x.repsDone > repsPr.repsDone)) repsPr = x;
+      if (x.type === 'drop' || x.weight > best.weight) continue;
+      const prior = best.sets.filter(p => p.type !== 'drop' && sameWeight(p.weight, x.weight));
+      if (!prior.length) continue;
+      const prevReps = Math.max(...prior.map(p => p.repsDone));
+      if (x.repsDone > prevReps && (!repsPr || x.repsDone > repsPr.set.repsDone)) repsPr = { set: x, prevReps };
     }
-    if (repsPr) {
-      const prevReps = Math.max(0, ...best.sets.filter(p => p.weight >= repsPr.weight).map(p => p.repsDone));
-      add('reps', repsPr.repsDone, prevReps);
-    }
+    if (repsPr) add('reps', repsPr.set.repsDone, repsPr.prevReps);
 
     const vol = sets.reduce((sum, x) => sum + seriesVolume(x), 0);
     if (vol > best.volume) add('volume', vol, best.volume);
