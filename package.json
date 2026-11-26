@@ -9,5 +9,8 @@
     "check": "node tests/check.mjs",
     "e2e": "node tests/e2e/smoke.mjs && node tests/e2e/actions.mjs && node tests/e2e/data.mjs && node tests/e2e/session.mjs && node tests/e2e/history.mjs && node tests/e2e/progress.mjs && node tests/e2e/plan.mjs && node tests/e2e/integrity.mjs && node tests/e2e/revision.mjs && node tests/e2e/offline.mjs",
     "bench": "node tests/bench/history-perf.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
   }
 }
