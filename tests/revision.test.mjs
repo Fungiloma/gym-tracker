@@ -145,3 +145,60 @@ test('bug 15: con todas las series por encima de 30 reps no hay 1RM (null, no 0)
   assert.equal(p[0].topWeight, 20, 'el peso máximo sigue contando');
   assert.ok(p[1].best1RM > 0);
 });
+
+// ---------- Bug 13: el límite de rutinas no cuenta las archivadas ----------
+test('bug 13: 50 rutinas activas más archivadas es un plan válido; 51 activas no', async () => {
+  const { validatePlan, PLAN_LIMITS, resetToDefault, createRoutine, usedIds } = await import('../js/routines.js');
+  const { defaultPlan } = await import('../js/plan.js');
+  const base = defaultPlan();
+  const mk = (i, archived = false) => ({ id: `r${i}`, name: `Rutina ${i}`, emoji: '', duration: 30, exercises: [], ...(archived ? { archived: true } : {}) });
+  const plan = { ...base, routines: [...Array.from({ length: PLAN_LIMITS.routines }, (_, i) => mk(i)), ...Array.from({ length: 10 }, (_, i) => mk(100 + i, true))] };
+  assert.equal(validatePlan(plan).ok, true);
+  const tooMany = { ...base, routines: Array.from({ length: PLAN_LIMITS.routines + 1 }, (_, i) => mk(i)) };
+  assert.equal(validatePlan(tooMany).ok, false);
+
+  // Restablecer el plan con 48 rutinas propias usadas por el historial: 4 originales + 48 archivadas.
+  const custom = Array.from({ length: 48 }, (_, i) => mk(i));
+  const current = { ...base, routines: [...base.routines, ...custom].slice(0, 50) };
+  assert.equal(validatePlan(current).ok, true);
+  const used = usedIds(current.routines.map(r => ({ planSessionId: r.id, exercises: [] })));
+  const reset = resetToDefault(current, used);
+  assert.equal(reset.ok, true, reset.error);
+  assert.equal(reset.plan.routines.filter(r => !r.archived).length, 4);
+  assert.ok(reset.plan.routines.filter(r => r.archived).length >= 46);
+
+  // Con 50 activas no se puede crear otra, pero sí archivando.
+  const full = { ...base, routines: Array.from({ length: 50 }, (_, i) => mk(i)) };
+  assert.equal(createRoutine(full, 'Otra').ok, false);
+});
+
+// ---------- Bug 14: ids de ejercicios v1 por nombre, no por posición ----------
+test('bug 14: dos ejercicios v1 distintos en la misma posición no comparten id', async () => {
+  const { fromV1Sessions } = await import('../js/data.js');
+  const v1 = (day, name) => ({ id: String(Date.UTC(2024, 0, day)), timestamp: Date.UTC(2024, 0, day), session: 'Sesión libre', exercises: [{ name, series: [{ weight: '50', weight2: '8' }] }] });
+  const r = fromV1Sessions([v1(1, 'Remo con barra'), v1(2, 'Curl de bíceps')]);
+  assert.equal(r.sessions.length, 2);
+  const ids = r.sessions.map(s => s.exercises[0].id);
+  assert.notEqual(ids[0], ids[1]);
+  assert.equal(ids[0], 'x-remo-con-barra');
+  assert.equal(ids[1], 'x-curl-de-biceps');
+  const again = fromV1Sessions([v1(3, 'Remo con barra')]);
+  assert.equal(again.sessions[0].exercises[0].id, ids[0], 'el mismo nombre da el mismo id');
+});
+
+// ---------- Bug 17: duración vacía ----------
+test('bug 17: vaciar la duración o el descanso de una rutina lo deja en 0', async () => {
+  const { updateRoutine, setRoutineSeries } = await import('../js/routines.js');
+  const { defaultPlan } = await import('../js/plan.js');
+  const plan = defaultPlan();
+  const id = plan.routines[0].id;
+  for (const empty of ['', '   ']) {
+    const r = updateRoutine(plan, id, { duration: empty });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.plan.routines[0].duration, 0);
+  }
+  assert.equal(updateRoutine(plan, id, { duration: 'abc' }).ok, false, 'el texto no numérico sigue rechazándose');
+  const rest = setRoutineSeries(plan, id, 0, 0, 'rest', '');
+  assert.equal(rest.ok, true, rest.error);
+  assert.equal(rest.plan.routines[0].exercises[0].series[0].rest, 0);
+});

@@ -398,9 +398,12 @@ function v1Session(raw, index, usedIds) {
     .slice(0, LIMITS.exercises)
     .map((ex, j) => {
       const planEx = (plan && plan.exercises.find(e => e.name === ex.name)) || null;
+      const name = text(ex.name, LIMITS.name) || 'Ejercicio';
       return {
-        id: planEx ? planEx.id : `v1-ex-${j}`,
-        name: text(ex.name, LIMITS.name) || 'Ejercicio',
+        // Fuera del plan, el id sale del nombre (como al sustituir en una sesión): el id posicional
+        // fusionaba ejercicios distintos que ocupaban el mismo lugar en sesiones distintas.
+        id: planEx ? planEx.id : slugId(name),
+        name,
         notes: '',
         series: (Array.isArray(ex.series) ? ex.series : []).slice(0, LIMITS.series).map((s, k) => v1Series(s, k, planEx)),
       };

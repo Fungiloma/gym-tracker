@@ -230,6 +230,7 @@ function onPlanEdit(el) {
     return;
   }
   if (el.type === 'text') el.value = el.value.trim();
+  if ((el.dataset.edit === 'routine-duration' || el.dataset.edit === 'series-rest') && el.value === '') el.value = '0';
   if (el.dataset.edit === 'routine-name') $('routine-title').textContent = el.value;
   if (el.dataset.edit === 'exercise-name') {
     const title = el.closest('.editor-row').querySelector('.editor-row-title');
