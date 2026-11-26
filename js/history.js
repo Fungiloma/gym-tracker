@@ -37,13 +37,24 @@ function card(title, ...children) {
   return h('section', { class: 'stat-card' }, h('div', { class: 'stat-title' }, title), ...children);
 }
 
+// Texto normalizado de cada sesión, calculado una vez (las sesiones no cambian): normalizar miles de
+// textos en cada tecla era el grueso del coste de buscar.
+const searchTexts = new WeakMap();
+
+function searchText(s) {
+  let text = searchTexts.get(s);
+  if (text === undefined) {
+    text = [s.name, s.notes, ...s.exercises.flatMap(ex => [ex.name, ex.notes])].map(norm).join('\n');
+    searchTexts.set(s, text);
+  }
+  return text;
+}
+
 export function filterSessions(sessions, search, plan) {
   const q = norm(search || '').trim();
   return sessions.filter(s => {
     if (plan && s.planSessionId !== plan) return false;
-    if (!q) return true;
-    return norm(s.name).includes(q) || norm(s.notes).includes(q)
-      || s.exercises.some(ex => norm(ex.name).includes(q) || norm(ex.notes).includes(q));
+    return !q || searchText(s).includes(q);
   });
 }
 
@@ -229,11 +240,11 @@ function body(data) {
 }
 
 // ==================== ENTRADA ====================
-// state: { tab, search, plan, exerciseId, calYear, calMonth, weekOffset }
+// state: { tab, search, plan, limit, exerciseId, calYear, calMonth, weekOffset }
 export function renderHistoryView(container, state, data, expandedIds, now = Date.now()) {
   if (state.tab === 'sessions') {
     const filtered = !!(state.search || state.plan);
-    renderHistory(container, filterSessions(data.sessions, state.search, state.plan), expandedIds, filtered);
+    renderHistory(container, filterSessions(data.sessions, state.search, state.plan), expandedIds, filtered, state.limit);
   } else if (state.tab === 'exercises') {
     container.replaceChildren(...(state.exerciseId ? exerciseDetail(state, data) : exerciseList(state, data)));
   } else if (state.tab === 'trends') {

@@ -81,10 +81,13 @@ try {
   assert.equal(await view.locator('.session-card').count(), 4);
   assert.match(await view.locator('.session-card').first().textContent(), /1365 kg de volumen/, 'el calentamiento no suma');
   await page.locator('#history-search').fill('PESO muerto');
+  await page.waitForTimeout(350); // la búsqueda espera 200 ms tras la última tecla
   assert.equal(await view.locator('.session-card').count(), 4, 'búsqueda sin tildes ni mayúsculas');
   await page.locator('#history-search').fill('buena');
+  await page.waitForTimeout(350); // la búsqueda espera 200 ms tras la última tecla
   assert.equal(await view.locator('.session-card').count(), 1, 'busca también en notas');
   await page.locator('#history-search').fill('zzz');
+  await page.waitForTimeout(350); // la búsqueda espera 200 ms tras la última tecla
   assert.match(await view.textContent(), /Sin resultados/);
   await page.locator('#history-search').fill('');
   await page.locator('#history-plan').selectOption('pecho-hombro');
@@ -97,6 +100,7 @@ try {
   await tab('exercises').click();
   assert.equal(await view.locator('.list-row').count(), 2);
   await page.locator('#history-search').fill('muerto');
+  await page.waitForTimeout(350); // la búsqueda espera 200 ms tras la última tecla
   assert.equal(await view.locator('.list-row').count(), 1);
   await page.locator('#history-search').fill('');
   await view.locator('.list-row', { hasText: 'Peso muerto' }).click();

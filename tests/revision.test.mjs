@@ -202,3 +202,40 @@ test('bug 17: vaciar la duración o el descanso de una rutina lo deja en 0', asy
   assert.equal(rest.ok, true, rest.error);
   assert.equal(rest.plan.routines[0].exercises[0].series[0].rest, 0);
 });
+
+// ---------- Bug 7: cuota de localStorage y cachés por versión del plan ----------
+test('bug 7: storageUsage cuenta solo claves de la app y avisa a partir del 70 %', async () => {
+  const { storageUsage, QUOTA_CHARS, QUOTA_WARN } = await import('../js/storage.js');
+  const fake = entries => {
+    const keys = Object.keys(entries);
+    return { length: keys.length, key: i => keys[i] ?? null, getItem: k => entries[k] ?? null };
+  };
+  assert.equal(QUOTA_WARN, 0.7);
+  const small = storageUsage(fake({ 'gymtracker.data': 'x'.repeat(1000), 'otra': 'y'.repeat(4_000_000) }));
+  assert.equal(small.chars, 'gymtracker.data'.length + 1000);
+  assert.ok(small.ratio < QUOTA_WARN);
+  const big = storageUsage(fake({ 'gymtracker.data': 'x'.repeat(QUOTA_CHARS * 0.7) }));
+  assert.ok(big.ratio >= QUOTA_WARN);
+  assert.equal(storageUsage({ get length() { throw new Error('no'); } }), null, 'sin acceso devuelve null');
+});
+
+test('bug 7: fieldsForExerciseId y findPlanExercise se memorizan y se invalidan al cambiar el plan', async () => {
+  const { defaultPlan, setActivePlan, findPlanExercise, planRevision } = await import('../js/plan.js');
+  const { fieldsForExerciseId } = await import('../js/data.js');
+  setActivePlan(defaultPlan());
+  const rev = planRevision();
+  const a = findPlanExercise('peso-muerto');
+  assert.equal(findPlanExercise('peso-muerto'), a, 'misma referencia mientras el plan no cambia');
+  const f = fieldsForExerciseId('peso-muerto');
+  assert.equal(fieldsForExerciseId('peso-muerto'), f);
+  assert.equal(findPlanExercise('no-existe'), null);
+  assert.equal(fieldsForExerciseId('no-existe').length, 3, 'ejercicio libre: campos genéricos');
+
+  const next = defaultPlan();
+  next.exercises.find(e => e.id === 'peso-muerto').fields = [{ key: 'repsDone', unit: 'reps', label: 'Reps' }];
+  setActivePlan(next);
+  assert.ok(planRevision() > rev);
+  assert.deepEqual(fieldsForExerciseId('peso-muerto').map(x => x.key), ['repsDone'], 'tras cambiar el plan no se sirve la caché vieja');
+  setActivePlan(defaultPlan());
+  assert.equal(fieldsForExerciseId('peso-muerto')[0].key, 'weight');
+});

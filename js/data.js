@@ -9,7 +9,7 @@
 //
 // Validación estricta para lo que dice ser v2 (se rechaza la sesión entera si algo no
 // cuadra) y lector tolerante para la v1 (se convierte lo que se pueda).
-import { getPlanSession, findPlanSessionByName, findPlanExercise, findLibraryExerciseByName, fieldsFor } from './plan.js';
+import { getPlanSession, findPlanSessionByName, findPlanExercise, findLibraryExerciseByName, fieldsFor, planRevision } from './plan.js';
 import { kgToDisplay, unitLabel } from './units.js';
 
 export const SCHEMA_VERSION = 2;
@@ -128,9 +128,22 @@ export function emptyData() {
   return { schemaVersion: SCHEMA_VERSION, sessions: [], body: [], settings: {} };
 }
 
+// Memorizado por versión del plan (se llama por cada ejercicio de cada sesión al pintar y analizar).
+let fieldsCache = new Map();
+let fieldsRevision = -1;
+
 export function fieldsForExerciseId(id) {
-  const ex = findPlanExercise(id);
-  return ex ? fieldsFor(ex) : GENERIC_FIELDS;
+  if (fieldsRevision !== planRevision()) {
+    fieldsCache = new Map();
+    fieldsRevision = planRevision();
+  }
+  let fields = fieldsCache.get(id);
+  if (!fields) {
+    const ex = findPlanExercise(id);
+    fields = ex ? fieldsFor(ex) : GENERIC_FIELDS;
+    fieldsCache.set(id, fields);
+  }
+  return fields;
 }
 
 // ==================== VALORES ====================

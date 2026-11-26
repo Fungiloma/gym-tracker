@@ -179,6 +179,69 @@ try {
     await context.close();
   }
 
+  // 6. Bug 7: el historial pagina (50 y "Ver más"), la búsqueda espera al debounce, expandir no repinta
+  //    la lista y calcula el volumen una vez por tarjeta.
+  if (runs(6)) {
+    const many = JSON.stringify({ schemaVersion: 2, body: [], settings: {}, sessions: Array.from({ length: 120 }, (_, i) => {
+      const ts = T0 - i * 66 * 3_600_000;
+      return {
+        id: `m${i}`, planSessionId: i % 2 ? 'pierna' : 'pecho-hombro', name: i % 2 ? 'Sesión 2: Pierna' : 'Sesión 1: Pecho + Hombro',
+        startedAt: ts, endedAt: ts + 3_600_000, notes: '',
+        exercises: [{ id: 'peso-muerto', name: 'Peso muerto', notes: '', series: [{ type: 'normal', target: '', weight: 100, weight2: null, repsDone: 5, rpe: null, done: true }] }],
+      };
+    }) });
+    const { context, page } = await open({ seed: { 'gymtracker.data': many } });
+    await page.locator('#screen-home [data-screen="history"]').click();
+    const cards = page.locator('#history-container .session-card');
+    assert.equal(await cards.count(), 50, 'primera página: 50 tarjetas');
+    assert.match(await page.locator('#history-more').textContent(), /Ver 50 más \(50 de 120\)/);
+    await page.locator('#history-more').click();
+    assert.equal(await cards.count(), 100);
+    await page.locator('#history-more').click();
+    assert.equal(await cards.count(), 120);
+    assert.equal(await page.locator('#history-more').count(), 0, 'sin botón cuando se ve todo');
+
+    // Expandir alterna la clase sin reconstruir la tarjeta ni la lista.
+    await page.evaluate(() => { document.querySelector('#history-container .session-card').__mark = 1; });
+    await page.locator('#history-container .session-header').first().click();
+    assert.equal(await page.evaluate(() => document.querySelector('#history-container .session-card').__mark), 1, 'la tarjeta es la misma');
+    assert.equal(await page.locator('#history-container .session-card.expanded').count(), 1);
+    await page.locator('#history-container .session-header').first().click();
+    assert.equal(await page.locator('#history-container .session-card.expanded').count(), 0);
+
+    // Búsqueda: sin repintar mientras se teclea; un solo repintado tras 200 ms. Vuelve a la primera página.
+    const sync = await page.evaluate(() => {
+      const input = document.getElementById('history-search');
+      input.value = 'pierna';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return document.querySelectorAll('#history-container .session-card').length;
+    });
+    assert.equal(sync, 120, 'la lista no se repinta en la tecla');
+    await page.waitForFunction(() => document.querySelectorAll('#history-container .session-card').length === 50, null, { timeout: 3000 });
+    assert.match(await page.locator('#history-more').textContent(), /Ver 10 más \(50 de 60\)/);
+    assert.equal(await page.locator('#history-container .session-title', { hasText: 'Pecho' }).count(), 0, 'solo rutina 2');
+    await finish(page);
+    await context.close();
+  }
+
+  // 7. Bug 7: aviso al pasar del 70 % de la cuota estimada de localStorage.
+  if (runs(7)) {
+    {
+      const { context, page } = await open();
+      assert.equal(await page.locator('#home-notices .notice').count(), 0, 'sin aviso con poco uso');
+      await context.close();
+    }
+    {
+      // Claves de otras apps del mismo origen no cuentan.
+      const { context, page } = await open({ seed: { 'otra.clave': 'x'.repeat(3_600_000) } });
+      assert.equal(await page.locator('#home-notices .notice-quota').count(), 0);
+      await context.close();
+    }
+    const { context, page } = await open({ seed: { 'gymtracker.relleno': 'x'.repeat(3_600_000) } });
+    assert.match(await page.locator('#home-notices .notice-quota').textContent(), /va por el 7\d %/);
+    await context.close();
+  }
+
   assert.deepEqual(problems, [], `errores de consola:\n${problems.join('\n')}`);
   console.log('e2e revision: ok (deshacer ligado al borrador, descanso largo, doble atrás, portapapeles, fecha local, CSP sin violaciones, viewport Pixel 7)');
 } catch (e) {

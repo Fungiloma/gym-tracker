@@ -19,7 +19,7 @@ import {
 } from './timers.js';
 import {
   h, renderHome, renderSession, renderSeriesRow, renderImportPreview, formatDate,
-  renderRestBar, updateRestBar, renderNotices,
+  renderRestBar, updateRestBar, renderNotices, HISTORY_PAGE,
 } from './views.js';
 import { renderHistoryView, TABS } from './history.js';
 import {
@@ -53,7 +53,9 @@ let editingRoutine = null;
 let editingExercise = null;
 let pendingPlanImport = null;
 // Estado de la pantalla de historial (no se guarda): pestaña, filtros y navegación de calendario/semana.
-const view = { tab: 'sessions', search: '', plan: '', exerciseId: null, calYear: 0, calMonth: 0, weekOffset: 0 };
+const view = { tab: 'sessions', search: '', plan: '', limit: HISTORY_PAGE, exerciseId: null, calYear: 0, calMonth: 0, weekOffset: 0 };
+const SEARCH_DEBOUNCE_MS = 200;
+let searchTimer = null;
 
 const $ = id => document.getElementById(id);
 const container = () => $('exercises-container');
@@ -287,8 +289,16 @@ function resetPlan() {
   planAction(resetToDefault(getActivePlan(), used()), 'Plan original restablecido');
 }
 
+// Aviso al pasar del 70 % de la cuota estimada de localStorage (ver storage.storageUsage).
+function quotaNotices() {
+  const usage = storage.storageUsage();
+  if (!usage || usage.ratio < storage.QUOTA_WARN) return [];
+  const pct = Math.round(usage.ratio * 100);
+  return [{ kind: 'quota', text: `El almacenamiento del navegador va por el ${pct} %. Descarga una copia (Ajustes) y valora borrar sesiones antiguas antes de que se llene: con el almacenamiento lleno no se puede guardar.` }];
+}
+
 function renderHomeNotices() {
-  renderNotices($('home-notices'), settings().progression ? deloadNotices(data.sessions) : []);
+  renderNotices($('home-notices'), [...(settings().progression ? deloadNotices(data.sessions) : []), ...quotaNotices()]);
 }
 
 // ==================== AVISOS ====================
@@ -948,6 +958,7 @@ function syncHistoryChrome() {
 }
 
 function renderHistoryScreen() {
+  clearTimeout(searchTimer);
   syncHistoryChrome();
   renderHistoryView($('history-container'), view, data, ui.expandedSessions);
 }
@@ -958,6 +969,7 @@ function openHistory() {
   view.calMonth = now.getMonth();
   view.weekOffset = 0;
   view.exerciseId = null;
+  view.limit = HISTORY_PAGE;
   // Las rutinas se pueden editar: la lista se rehace cada vez (las archivadas siguen en el historial).
   const sel = $('history-plan');
   const routines = planSessions({ archived: true });
@@ -973,6 +985,7 @@ function setHistoryTab(tab) {
   if (!TABS.some(([id]) => id === tab)) return;
   view.tab = tab;
   view.exerciseId = null;
+  view.limit = HISTORY_PAGE;
   renderHistoryScreen();
 }
 
@@ -1133,7 +1146,10 @@ function toggleExpandSession(id) {
   if (idx >= 0) ui.expandedSessions.splice(idx, 1);
   else ui.expandedSessions.push(id);
   saveUi();
-  renderHistoryScreen();
+  // Se alterna la clase de esa tarjeta: repintar toda la lista por abrir una costaba más de un segundo.
+  const card = [...$('history-container').querySelectorAll('.session-card')].find(c => c.dataset.id === id);
+  if (card) card.classList.toggle('expanded', idx < 0);
+  else renderHistoryScreen();
 }
 
 // ==================== PROGRESIÓN Y MODO GUIADO ====================
@@ -1408,6 +1424,7 @@ const ACTIONS = {
   'share-card': () => shareCard(),
   'toggle-expand': el => toggleExpandSession(el.dataset.id),
   'delete-session': el => deleteSession(el.dataset.id),
+  'history-more': () => { view.limit += HISTORY_PAGE; renderHistoryScreen(); },
   'history-tab': el => setHistoryTab(el.dataset.tab),
   'select-exercise': el => { view.exerciseId = el.dataset.id; renderHistoryScreen(); },
   'clear-exercise': () => { view.exerciseId = null; renderHistoryScreen(); },
@@ -1473,12 +1490,16 @@ function initEvents() {
   $('plates-container').addEventListener('input', e => {
     if (e.target.classList.contains('plates-input')) updatePlates();
   });
+  // La búsqueda espera a que se deje de teclear: filtrar y repintar en cada letra bloqueaba el móvil.
   $('history-search').addEventListener('input', e => {
     view.search = e.target.value;
-    renderHistoryScreen();
+    view.limit = HISTORY_PAGE;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(renderHistoryScreen, SEARCH_DEBOUNCE_MS);
   });
   $('history-plan').addEventListener('change', e => {
     view.plan = e.target.value;
+    view.limit = HISTORY_PAGE;
     renderHistoryScreen();
   });
 
