@@ -53,7 +53,7 @@ const SETTING_CHECKS = {
   sound: v => typeof v === 'boolean',
   vibration: v => typeof v === 'boolean',
   progression: v => typeof v === 'boolean',
-  defaultRest: v => Number.isInteger(v) && v >= 0 && v <= 3600,
+  defaultRest: v => Number.isInteger(v) && v >= 0 && v <= MAX_REST,
   bar: v => typeof v === 'number' && Number.isFinite(v) && v >= SETTINGS_LIMITS.bar.min && v <= SETTINGS_LIMITS.bar.max,
   plates: v => Array.isArray(v) && v.length >= 1 && v.length <= SETTINGS_LIMITS.plates
     && v.every(p => typeof p === 'number' && Number.isFinite(p) && p >= SETTINGS_LIMITS.plate.min && p <= SETTINGS_LIMITS.plate.max),
@@ -432,6 +432,7 @@ export function fromV1Sessions(list) {
 // DraftSeries   = Series + rest (segundos de descanso tras la serie; 0 = sin descanso)
 // El borrador es autodescriptivo: se pueden añadir/quitar series, reordenar y sustituir
 // ejercicios sin que el índice siga alineado con el plan.
+// Único límite de descanso (segundos): editor del plan, ajuste, descanso por ejercicio y temporizador.
 export const MAX_REST = 3600;
 
 function blankSeries(planSerie) {

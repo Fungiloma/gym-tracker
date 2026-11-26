@@ -37,7 +37,6 @@ import { detectRecords, formatRecord, buildWeeklySummary, weekStart, addWeeks, d
 // ui.timer: el único descanso activo (se guarda solo en eventos, no en cada tick).
 const DEFAULT_UI = { timer: null, restByExercise: {}, expandedSessions: [], notifAsked: false, guided: false, guidedIndex: 0 };
 const REST_STEP = 15;
-const REST_STEP_MAX = 600;
 
 let data = null;
 let draft = null;
@@ -437,12 +436,24 @@ function goScreen(name, mode = 'push') {
   showScreen(name);
 }
 
+// Entre history.back() y su popstate el estado aún es el de antes: un segundo "atrás" rápido saldría de
+// la app. Mientras vuelve, se ignoran los demás; el temporizador cubre un popstate que no llegue.
+let goingBack = false;
+let goingBackTimer = null;
+
 function goBack() {
-  if (depth() > 0) history.back();
-  else goScreen('home', 'replace');
+  if (goingBack) return;
+  if (depth() > 0) {
+    goingBack = true;
+    clearTimeout(goingBackTimer);
+    goingBackTimer = setTimeout(() => { goingBack = false; }, 600);
+    history.back();
+  } else goScreen('home', 'replace');
 }
 
 function onPopState(e) {
+  goingBack = false;
+  clearTimeout(goingBackTimer);
   let name = (e.state && e.state.screen) || 'home';
   if (name === 'routine' && !getPlanSession(editingRoutine)) name = 'routines';
   if ((name === 'session' && !draft) || (name === 'summary' && !summaryShown)) {
@@ -527,6 +538,7 @@ function renderSessionView() {
 
 function endDraft() {
   draft = null;
+  hideToast();
   substituting = null;
   storage.clearDraft();
   ui.timer = null;
@@ -650,6 +662,7 @@ function addSeriesTo(exIdx) {
 function removeSeriesFrom(exIdx) {
   if (!draft || exIdx === null) return;
   const exId = draft.exercises[exIdx] && draft.exercises[exIdx].id;
+  const draftId = draft.id;
   const removed = removeLastSeries(draft, exIdx);
   if (!removed) {
     toast('Cada ejercicio necesita al menos una serie.', 'error');
@@ -660,7 +673,9 @@ function removeSeriesFrom(exIdx) {
   toast(`Serie ${removed.index + 1} quitada`, 'info', {
     label: 'Deshacer',
     run: () => {
-      const i = draft ? draft.exercises.findIndex(e => e.id === exId) : -1;
+      // Solo se deshace en el borrador donde se quitó: otra sesión puede tener el mismo ejercicio.
+      if (!draft || draft.id !== draftId) return;
+      const i = draft.exercises.findIndex(e => e.id === exId);
       if (i < 0 || !insertSeries(draft, i, removed.index, removed.series)) return;
       saveDraft();
       renderSessionView();
@@ -712,7 +727,7 @@ function confirmSubstitute(exIdx) {
 function stepRest(exIdx, delta) {
   const ex = draft && exIdx !== null && draft.exercises[exIdx];
   if (!ex || !Number.isInteger(delta)) return;
-  const next = Math.min(REST_STEP_MAX, Math.max(0, restOf(ex) + delta));
+  const next = Math.min(MAX_REST, Math.max(0, restOf(ex) + delta));
   ui.restByExercise[ex.id] = next;
   saveUi();
   renderSessionView();
@@ -880,19 +895,28 @@ function copySummary(btn) {
   copyText($('summary-text').textContent, btn);
 }
 
-function copyText(text, btn) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => flashCopied(btn));
-    return;
-  }
+// Copia con un textarea temporal (navegadores sin Clipboard API o con permiso denegado). true si copió.
+function legacyCopy(text) {
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.className = 'clipboard-fallback';
   document.body.appendChild(ta);
   ta.select();
-  document.execCommand('copy');
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {}
   document.body.removeChild(ta);
-  flashCopied(btn);
+  return ok;
+}
+
+function copyText(text, btn) {
+  const done = ok => (ok ? flashCopied(btn) : toast('No se pudo copiar. Selecciona el texto y cópialo a mano.', 'error'));
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => flashCopied(btn), () => done(legacyCopy(text)));
+    return;
+  }
+  done(legacyCopy(text));
 }
 
 // ==================== HISTORY ====================
@@ -1163,7 +1187,7 @@ function stepSettingAction(el) {
   const key = el.dataset.key;
   const delta = Number(el.dataset.delta);
   if (key !== 'defaultRest' || !Number.isInteger(delta)) return;
-  changeSetting(key, Math.min(REST_STEP_MAX, Math.max(0, settings().defaultRest + delta)));
+  changeSetting(key, Math.min(MAX_REST, Math.max(0, settings().defaultRest + delta)));
 }
 
 function showPlates() {
@@ -1265,8 +1289,9 @@ async function shareCard() {
 }
 
 // ==================== EXPORT / IMPORT ====================
+// Fecha local (no UTC) para los nombres de fichero: tras las 00:00 UTC+x o antes de las 00:00 UTC-x el día cambia.
 function stamp() {
-  return new Date().toISOString().slice(0, 10);
+  return dayKey(Date.now());
 }
 
 function exportFile(kind) {
@@ -1515,11 +1540,13 @@ function initEvents() {
   });
 }
 
+// Un solo listener: cada oferta de versión sustituye la función a ejecutar en vez de apilar otro clic.
 function initServiceWorker() {
+  let applyUpdate = null;
+  $('update-reload').addEventListener('click', () => { if (applyUpdate) applyUpdate(); });
   registerServiceWorker(apply => {
-    const banner = $('update-banner');
-    $('update-reload').addEventListener('click', apply);
-    banner.hidden = false;
+    applyUpdate = apply;
+    $('update-banner').hidden = false;
   });
 }
 
