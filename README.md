@@ -69,12 +69,12 @@ Requiere Node 22. No hay dependencias que instalar para `check` y `test`.
 ```bash
 npm run check   # sintaxis, referencias del manifiesto y del shell
 npm test        # tests unitarios (node --test)
-npm run e2e     # E2E con Playwright en Chromium (necesita Playwright instalado)
+npm run e2e     # E2E con Playwright en Chromium (npm ci; en local, npx playwright install chromium)
 npm run bench   # mide el historial con 2.000 sesiones sembradas y CPU x4 (necesita Playwright)
 python -m http.server 8000   # servir en http://localhost:8000
 ```
 
-El Service Worker exige HTTPS salvo en `localhost`. El despliegue es GitHub Pages desde `master`. CI (`.github/workflows/ci.yml`) ejecuta `check` y `test`; el E2E no corre en CI.
+El Service Worker exige HTTPS salvo en `localhost`. El despliegue es GitHub Pages desde `master`. CI (`.github/workflows/ci.yml`) ejecuta `check` y `test` en un job y los E2E (Chromium emulando un Pixel 7) en otro. Los E2E no sustituyen una prueba en un Android real.
 
 ## Más información
 

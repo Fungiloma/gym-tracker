@@ -2,6 +2,11 @@
 
 Cambios por fase del plan de auditoría ([docs/PLAN-AUDITORIA.md](docs/PLAN-AUDITORIA.md)). El historial de commits es la fuente definitiva.
 
+## CI con E2E
+
+- Nuevo job `e2e` en `.github/workflows/ci.yml`: `npm ci`, Chromium de Playwright con caché y `npm run e2e` (los 12 E2E, Pixel 7 emulado). El job `check` (sintaxis y tests unitarios) no cambia.
+- Playwright pasa a devDependency con versión exacta (1.63.0) y se añade `package-lock.json`. Dependabot vigila también npm.
+
 ## Fase 10b. Correcciones y rendimiento
 
 - Una serie solo cuenta como hecha (volumen, récords, sobrecarga) con ✓; al guardar se avisa de las series con valores sin marcar.

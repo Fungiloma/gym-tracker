@@ -29,7 +29,7 @@ Límites:
 
 ## Dependencias
 
-La app no tiene dependencias de ejecución. Dependabot vigila las versiones de las acciones de GitHub Actions.
+La app no tiene dependencias de ejecución. La única dependencia de desarrollo es Playwright, con versión exacta y `package-lock.json`, que solo se usa en los tests y en CI. Dependabot vigila las acciones de GitHub Actions y los paquetes npm.
 
 ## Reportar una vulnerabilidad
 
